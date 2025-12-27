@@ -14,10 +14,3 @@ export interface FinalTranscript {
     endTime: number;
     speaker?: string;
 }
-
-export interface TranscriptionSession {
-    id: string;
-    startedAt: Date;
-    endedAt?: Date;
-    transcripts: FinalTranscript[];
-}

@@ -1,12 +1,13 @@
-// Local Agent Entry Point
-// System companion for audio capture and transcription
+// Selly Local Agent - Entry Point
+// V1 Sales Copilot Local Agent
+// 
+// This agent runs as a local background process.
+// Responsibilities (per SPEC.md):
+// - Audio capture
+// - Device management
+// - Transcription streaming
+// - Question detection
+//
+// Current phase: Bootstrap only
 
-export { AudioDeviceManager } from './audio/AudioDeviceManager';
-export { AudioCapture } from './audio/AudioCapture';
-export { CloudTranscriber } from './transcription/CloudTranscriber';
-export { QuestionDetector } from './intent/QuestionDetector';
-export { AudioSessionController } from './session/AudioSessionController';
-
-// Re-export types
-export * from './transcription/TranscriptionTypes';
-export * from './intent/IntentTypes';
+console.log('Agent ready');

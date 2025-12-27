@@ -1,17 +1,7 @@
-// Question Detector
+// Question Detector Module Skeleton
 // Detects questions from transcript text
-
-export interface DetectedQuestion {
-    text: string;
-    confidence: number;
-    timestamp: number;
-    category?: string;
-}
+// Implementation: Phase 3+
 
 export class QuestionDetector {
-    detect(transcript: string): DetectedQuestion | null {
-        // TODO: Implement question detection logic
-        // Should detect questions within ~100ms
-        return null;
-    }
+    // Stub: Question detection will be implemented in later phases
 }

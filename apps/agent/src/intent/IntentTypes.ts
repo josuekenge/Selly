@@ -11,8 +11,9 @@ export enum IntentCategory {
     GENERAL = 'general',
 }
 
-export interface Intent {
-    category: IntentCategory;
+export interface DetectedQuestion {
+    text: string;
     confidence: number;
-    keywords: string[];
+    timestamp: number;
+    category?: IntentCategory;
 }

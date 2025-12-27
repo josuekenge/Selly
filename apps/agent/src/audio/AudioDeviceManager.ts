@@ -1,24 +1,7 @@
-// Audio Device Manager
+// Audio Device Manager Module Skeleton
 // Manages audio input/output device enumeration and selection
-
-export interface AudioDevice {
-    id: string;
-    name: string;
-    isDefault: boolean;
-}
+// Implementation: Phase 3+
 
 export class AudioDeviceManager {
-    async getInputDevices(): Promise<AudioDevice[]> {
-        // TODO: Implement device enumeration
-        return [];
-    }
-
-    async getOutputDevices(): Promise<AudioDevice[]> {
-        // TODO: Implement device enumeration
-        return [];
-    }
-
-    async setActiveDevice(deviceId: string): Promise<void> {
-        // TODO: Implement device selection
-    }
+    // Stub: Device enumeration will be implemented in later phases
 }
