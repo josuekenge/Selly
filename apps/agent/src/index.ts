@@ -8,6 +8,9 @@
 // - Transcription streaming
 // - Question detection
 //
-// Current phase: Bootstrap only
+// Current phase: Audio capture via HTTP server
 
-console.log('Agent ready');
+import { startServer } from './server.js';
+
+console.log('Selly Agent starting...');
+startServer();

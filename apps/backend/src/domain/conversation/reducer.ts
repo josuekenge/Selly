@@ -13,7 +13,7 @@ const DEFAULT_WINDOW_SIZE = 20;
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
 const HIGH_CONFIDENCE_THRESHOLD = 0.9;
 
-function createInitialState(
+export function createInitialState(
     sessionId: string,
     workspaceId: string,
     timestamp: number

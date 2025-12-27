@@ -6,8 +6,11 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
+        "build:sidecar": "cd native/win-audio-capture && cargo build --release",
+        "build:all": "npm run build:sidecar && npm run build",
         "start": "node dist/index.js",
-        "dev": "tsc && node dist/index.js"
+        "dev": "tsc && node dist/index.js",
+        "dev:full": "npm run build:sidecar && npm run dev"
     },
     "devDependencies": {
         "@types/node": "^22.0.0",

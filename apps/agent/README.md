@@ -13,8 +13,11 @@ Node.js + TypeScript local background process for V1 Sales Copilot.
 # Install dependencies
 npm install
 
-# Build and run
-npm run dev
+# Build and run web version 
+npm run dev  
+
+#run desktop version 
+npm run tauri dev
 
 # Or build separately
 npm run build
