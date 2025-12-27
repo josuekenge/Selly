@@ -4,19 +4,15 @@
 node_modules/
 
 # ================================
-# Frontend build artifacts (Vite)
+# Compiled JavaScript output
 # ================================
 dist/
 
 # ================================
-# Vite cache
+# Logs
 # ================================
-.vite/
-
-# ================================
-# Tauri build outputs
-# ================================
-src-tauri/target/
+logs/
+*.log
 
 # ================================
 # Environment files
