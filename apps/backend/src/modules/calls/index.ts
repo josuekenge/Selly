@@ -1,17 +1,7 @@
-// Calls Module
+// Calls Module Skeleton
 // Manages call sessions and metadata
-
-export interface Call {
-    id: string;
-    workspaceId: string;
-    userId: string;
-    startedAt: Date;
-    endedAt?: Date;
-    status: 'active' | 'completed' | 'failed';
-}
+// Implementation: Future phase
 
 export interface CallService {
-    startCall(workspaceId: string, userId: string): Promise<Call>;
-    endCall(callId: string): Promise<Call>;
-    getCall(callId: string): Promise<Call | null>;
+    // Stub: Will be implemented in future phases
 }

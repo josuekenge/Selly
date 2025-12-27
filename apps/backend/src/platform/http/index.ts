@@ -1,11 +1,7 @@
-// HTTP Platform Layer
-// Express/Fastify server configuration and routing
+// HTTP Platform Layer Skeleton
+// Express server configuration and routing
+// Implementation: Future phase
 
-export interface HttpServerConfig {
-    port: number;
-    host: string;
-}
-
-export const createHttpServer = (config: HttpServerConfig) => {
-    // TODO: Initialize HTTP server
+export const createHttpServer = () => {
+    // Stub: Server factory will be expanded in future phases
 };

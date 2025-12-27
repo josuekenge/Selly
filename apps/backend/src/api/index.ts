@@ -1,10 +1,9 @@
-// API Layer
+// API Layer Skeleton
 // HTTP route definitions
+// Implementation: Future phase
 
-export const registerRoutes = (app: unknown) => {
-    // TODO: Register API routes
-    // - /api/calls
-    // - /api/transcripts
-    // - /api/knowledge
-    // - /api/suggestions
+import type { Router } from 'express';
+
+export const registerRoutes = (router: Router): void => {
+    // Stub: Routes will be registered in future phases
 };

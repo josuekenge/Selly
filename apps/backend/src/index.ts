@@ -1,20 +1,33 @@
-// Backend Entry Point
-// Modular monolith main entry
+// Selly Backend - Entry Point
+// V1 Sales Copilot Backend API
+// 
+// Architecture: Modular Monolith (per SPEC.md)
+// - One deployable backend service
+// - All modules run in the same process
+// - Modules are logically isolated by folders and interfaces
+// - No microservices, no message queues
+//
+// Current phase: Bootstrap only
 
-import { createHttpServer } from './platform/http';
-import { registerRoutes } from './api';
-import { createServices } from './services';
+import express from 'express';
 
-const main = async () => {
-    const services = createServices();
+const app = express();
+const PORT = process.env.PORT ?? 3000;
 
-    const server = createHttpServer({
-        port: parseInt(process.env.PORT || '3000'),
-        host: process.env.HOST || '0.0.0.0',
+// Middleware
+app.use(express.json());
+
+// Health endpoint
+app.get('/health', (_req, res) => {
+    res.json({
+        status: 'ok',
+        service: 'selly-backend',
+        version: '0.1.0',
+        timestamp: new Date().toISOString(),
     });
+});
 
-    // TODO: Initialize server with routes and services
-    console.log('Backend starting...');
-};
-
-main().catch(console.error);
+// Start server
+app.listen(PORT, () => {
+    console.log(`Backend ready on port ${PORT}`);
+});

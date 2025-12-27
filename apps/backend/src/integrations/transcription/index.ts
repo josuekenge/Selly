@@ -1,24 +1,8 @@
-// Transcription Integration Adapter
+// Transcription Integration Adapter Skeleton
 // Wraps external transcription provider APIs
-// This is an adapter layer - all transcription providers must implement this interface
+// All external APIs must be wrapped in adapters (per SPEC.md Rule 4)
+// Implementation: Future phase
 
 export interface TranscriptionProvider {
-    name: string;
-    connect(): Promise<void>;
-    disconnect(): Promise<void>;
-    streamAudio(chunk: ArrayBuffer): Promise<void>;
-    onTranscript(callback: (result: TranscriptionResult) => void): void;
+    // Stub: Provider interface will be defined in future phases
 }
-
-export interface TranscriptionResult {
-    text: string;
-    isFinal: boolean;
-    confidence: number;
-    timestamp: number;
-}
-
-// Factory for creating transcription provider instances
-export const createTranscriptionProvider = (providerName: string): TranscriptionProvider => {
-    // TODO: Implement provider factory (Deepgram, AssemblyAI, etc.)
-    throw new Error(`Provider ${providerName} not implemented`);
-};

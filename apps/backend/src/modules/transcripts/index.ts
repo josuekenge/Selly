@@ -1,16 +1,7 @@
-// Transcripts Module
+// Transcripts Module Skeleton
 // Stores and manages call transcripts
-
-export interface Transcript {
-    id: string;
-    callId: string;
-    workspaceId: string;
-    text: string;
-    createdAt: Date;
-}
+// Implementation: Future phase
 
 export interface TranscriptService {
-    saveTranscript(callId: string, workspaceId: string, text: string): Promise<Transcript>;
-    getTranscript(transcriptId: string): Promise<Transcript | null>;
-    getTranscriptsForCall(callId: string): Promise<Transcript[]>;
+    // Stub: Will be implemented in future phases
 }

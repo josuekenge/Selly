@@ -1,7 +1,8 @@
-// Services Layer
+// Services Layer Skeleton
 // Service orchestration and dependency injection
+// Implementation: Future phase
 
 export const createServices = () => {
-    // TODO: Initialize and wire up all services
+    // Stub: Services will be wired up in future phases
     return {};
 };
