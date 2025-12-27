@@ -23,6 +23,34 @@ export interface TranscriptReceivedEvent {
         readonly timestamp: number;
     };
 }
+export interface TranscriptFinalizedEvent {
+    readonly type: 'transcript.finalized';
+    readonly payload: {
+        readonly callId: string;
+        readonly utteranceId: string;
+        readonly speaker: 'rep' | 'prospect';
+        readonly text: string;
+        readonly startedAt: number;
+        readonly endedAt: number;
+        readonly confidence: number;
+    };
+}
+export interface SpeakerTurnDetectedEvent {
+    readonly type: 'speaker.turn_detected';
+    readonly payload: {
+        readonly callId: string;
+        readonly speaker: 'rep' | 'prospect';
+        readonly timestamp: number;
+    };
+}
+export interface SilenceDetectedEvent {
+    readonly type: 'silence.detected';
+    readonly payload: {
+        readonly callId: string;
+        readonly durationMs: number;
+        readonly timestamp: number;
+    };
+}
 export interface QuestionDetectedEvent {
     readonly type: 'question.detected';
     readonly payload: {
@@ -59,5 +87,5 @@ export interface CallEndedEvent {
         readonly timestamp: number;
     };
 }
-export type DomainEvent = AudioCaptureStartedEvent | AudioCaptureStoppedEvent | TranscriptReceivedEvent | QuestionDetectedEvent | SuggestionGeneratedEvent | CallStartedEvent | CallEndedEvent;
+export type DomainEvent = AudioCaptureStartedEvent | AudioCaptureStoppedEvent | TranscriptReceivedEvent | TranscriptFinalizedEvent | SpeakerTurnDetectedEvent | SilenceDetectedEvent | QuestionDetectedEvent | SuggestionGeneratedEvent | CallStartedEvent | CallEndedEvent;
 //# sourceMappingURL=index.d.ts.map

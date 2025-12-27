@@ -1,0 +1,15 @@
+{
+    "name": "selly-monorepo",
+    "version": "0.1.0",
+    "private": true,
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ],
+    "scripts": {
+        "build:contracts": "npm run build --workspace=@selly/contracts",
+        "build:backend": "npm run build --workspace=selly-backend",
+        "build:agent": "npm run build --workspace=selly-agent",
+        "build": "npm run build:contracts && npm run build:backend && npm run build:agent"
+    }
+}
