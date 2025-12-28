@@ -150,6 +150,7 @@ function createLLMClient(timeoutMs: number): LlmJsonClient {
  */
 function buildLightweightContext(
     sessionId: string,
+    workspaceId: string,
     recentTranscript: TranscriptRecord[],
     timestamp: number
 ): SerializedConversationContext {
@@ -168,42 +169,87 @@ function buildLightweightContext(
     const avgConfidence = utterances.length > 0
         ? utterances.reduce((sum, u) => sum + u.confidence, 0) / utterances.length
         : 0;
+    const minConfidence = utterances.length > 0
+        ? Math.min(...utterances.map(u => u.confidence))
+        : 0;
+    const maxConfidence = utterances.length > 0
+        ? Math.max(...utterances.map(u => u.confidence))
+        : 0;
+    const lowConfidenceCount = utterances.filter(u => u.confidence < 0.7).length;
+    const highConfidenceRatio = utterances.length > 0
+        ? utterances.filter(u => u.confidence >= 0.9).length / utterances.length
+        : 0;
 
     const callDurationMs = utterances.length > 0
         ? utterances[utterances.length - 1].endedAt - utterances[0].startedAt
         : 0;
 
+    const startedAt = utterances.length > 0 ? utterances[0].startedAt : timestamp;
+
+    // Calculate speaking times
+    const repSpeakingTimeMs = repUtterances.reduce((sum, u) => sum + (u.endedAt - u.startedAt), 0);
+    const prospectSpeakingTimeMs = prospectUtterances.reduce((sum, u) => sum + (u.endedAt - u.startedAt), 0);
+
     return {
         call: {
             sessionId,
+            workspaceId,
+            startedAt,
             lastEventAt: timestamp,
+            phase: 'active',
         },
         transcript: {
-            utterances: utterances.map((u, i) => ({
-                speaker: u.speaker,
+            utterances: utterances.map((u) => ({
+                speaker: u.speaker as 'rep' | 'prospect',
                 text: u.text,
                 confidence: u.confidence,
                 startedAt: u.startedAt,
                 endedAt: u.endedAt,
-                index: i,
             })),
-            totalUtteranceCount: utterances.length,
         },
         metrics: {
-            dominance: {
-                repTalkRatio,
-                prospectTalkRatio,
+            repMetrics: {
+                utteranceCount: repUtterances.length,
+                totalSpeakingTimeMs: repSpeakingTimeMs,
+                totalWordCount: repWords,
+                avgUtteranceDurationMs: repUtterances.length > 0 ? repSpeakingTimeMs / repUtterances.length : 0,
             },
-            confidence: {
-                avgConfidence,
-                lowConfidenceUtteranceCount: utterances.filter(u => u.confidence < 0.7).length,
+            prospectMetrics: {
+                utteranceCount: prospectUtterances.length,
+                totalSpeakingTimeMs: prospectSpeakingTimeMs,
+                totalWordCount: prospectWords,
+                avgUtteranceDurationMs: prospectUtterances.length > 0 ? prospectSpeakingTimeMs / prospectUtterances.length : 0,
             },
             timing: {
                 callDurationMs,
+                totalSilenceMs: 0, // Not calculated for lightweight context
+                silenceCount: 0,
+                longestSilenceMs: 0,
+                avgSilenceMs: 0,
             },
+            dominance: {
+                repTalkRatio,
+                prospectTalkRatio,
+                currentStreak: {
+                    speaker: utterances.length > 0 ? utterances[utterances.length - 1].speaker as 'rep' | 'prospect' : null,
+                    count: 1,
+                },
+                longestStreak: 1,
+            },
+            confidence: {
+                avgConfidence,
+                minConfidence,
+                maxConfidence,
+                lowConfidenceCount,
+                highConfidenceRatio,
+            },
+        },
+        meta: {
+            eventCount: utterances.length,
         },
     };
 }
+
 
 /**
  * Get or create session cache
@@ -321,7 +367,7 @@ async function generateLiveRecommendationsInternal(
         }
 
         // Step 2: Build lightweight context
-        const context = buildLightweightContext(sessionId, recentTranscript, timestamp);
+        const context = buildLightweightContext(sessionId, request.workspaceId, recentTranscript, timestamp);
 
         // Step 3: Extract signals (deterministic, fast)
         const signals3a = extractSignals(context);

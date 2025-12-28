@@ -1,13 +1,13 @@
 // Audio Capture Module
 // Windows-only dual audio capture via Rust sidecar
 // MIC (left) + WASAPI loopback (right) -> stereo WAV
-//
-// NO transcription, NO AI, NO secrets in logs
+// Now with LIVE TRANSCRIPTION via Deepgram streaming
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, statSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LiveTranscriber } from '../transcription/LiveTranscriber.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +23,12 @@ const RECORDINGS_DIR = join(__dirname, '..', '..', 'recordings');
 
 // Map of active capture sessions
 const activeCaptures = new Map<string, ChildProcess>();
+
+// Map of active live transcribers
+const activeLiveTranscribers = new Map<string, LiveTranscriber>();
+
+// Deepgram API Key (from environment)
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || '';
 
 export interface CaptureStartResult {
     ok: boolean;
@@ -73,6 +79,7 @@ export function isSessionActive(sessionId: string): boolean {
 /**
  * Starts audio capture for a session.
  * Spawns the Rust sidecar to capture MIC + loopback to stereo WAV.
+ * Also starts live transcription via Deepgram if API key is available.
  */
 export async function startCapture(sessionId: string): Promise<CaptureStartResult> {
     // Fail fast on non-Windows
@@ -108,32 +115,67 @@ export async function startCapture(sessionId: string): Promise<CaptureStartResul
     ensureRecordingsDir();
     const outputPath = getOutputPath(sessionId);
 
-    // Spawn the sidecar process
+    // Spawn the sidecar process WITH stdout pipe (for live transcription)
     const child = spawn(SIDECAR_PATH, [
         '--session', sessionId,
         '--out', outputPath,
         '--sample-rate', '48000',
         '--channels', '2',
     ], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe'], // stdout piped for PCM frames
         windowsHide: true,
     });
 
-    // Log stdout/stderr without secrets
-    child.stdout?.on('data', (data: Buffer) => {
-        const msg = data.toString().trim();
-        if (msg) console.log(`[capture:${sessionId}] ${msg}`);
-    });
+    // Start live transcription if Deepgram API key is available
+    let liveTranscriber: LiveTranscriber | null = null;
+    if (DEEPGRAM_API_KEY && child.stdout) {
+        try {
+            liveTranscriber = new LiveTranscriber({
+                sessionId,
+                deepgramApiKey: DEEPGRAM_API_KEY,
+                sampleRate: 48000,
+                channels: 2,
+            });
 
+            // Start Deepgram connection
+            await liveTranscriber.start();
+
+            // Attach to sidecar stdout for PCM frames
+            liveTranscriber.attachToStream(child.stdout);
+
+            activeLiveTranscribers.set(sessionId, liveTranscriber);
+            console.log(`[capture:${sessionId}] Live transcription enabled`);
+        } catch (err) {
+            console.warn(`[capture:${sessionId}] Live transcription failed to start:`, err);
+            // Continue without live transcription
+        }
+    } else {
+        if (!DEEPGRAM_API_KEY) {
+            console.warn(`[capture:${sessionId}] No DEEPGRAM_API_KEY, live transcription disabled`);
+        }
+        // Log stderr for debugging when not transcribing
+        child.stdout?.on('data', () => {
+            // Discard stdout PCM data when not transcribing
+        });
+    }
+
+    // Log stderr (sidecar status messages)
     child.stderr?.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
-        if (msg) console.error(`[capture:${sessionId}] ${msg}`);
+        if (msg) console.log(`[capture:${sessionId}] ${msg}`);
     });
 
     // Clean up on exit
     child.on('exit', (code) => {
         console.log(`[capture:${sessionId}] Process exited with code ${code}`);
         activeCaptures.delete(sessionId);
+
+        // Stop live transcriber
+        const transcriber = activeLiveTranscribers.get(sessionId);
+        if (transcriber) {
+            transcriber.stop().catch(console.error);
+            activeLiveTranscribers.delete(sessionId);
+        }
     });
 
     child.on('error', (err) => {
@@ -150,6 +192,10 @@ export async function startCapture(sessionId: string): Promise<CaptureStartResul
     // Check if process is still running
     if (child.killed || child.exitCode !== null) {
         activeCaptures.delete(sessionId);
+        if (liveTranscriber) {
+            await liveTranscriber.stop();
+            activeLiveTranscribers.delete(sessionId);
+        }
         return {
             ok: false,
             sessionId,
@@ -168,6 +214,7 @@ export async function startCapture(sessionId: string): Promise<CaptureStartResul
 /**
  * Stops audio capture for a session.
  * Sends SIGINT to the sidecar and waits for graceful shutdown.
+ * Also stops live transcription.
  */
 export async function stopCapture(sessionId: string): Promise<CaptureStopResult> {
     const outputPath = getOutputPath(sessionId);
@@ -183,6 +230,14 @@ export async function stopCapture(sessionId: string): Promise<CaptureStopResult>
     }
 
     const child = activeCaptures.get(sessionId)!;
+
+    // Stop live transcriber first
+    const transcriber = activeLiveTranscribers.get(sessionId);
+    if (transcriber) {
+        console.log(`[capture:${sessionId}] Stopping live transcription...`);
+        await transcriber.stop();
+        activeLiveTranscribers.delete(sessionId);
+    }
 
     // Send SIGINT (works on Windows too in Node.js)
     // On Windows, this sends a ctrl+c event

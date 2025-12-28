@@ -10,7 +10,8 @@
       "Bash(npm run tauri:*)",
       "Bash(rm:*)",
       "Bash(find:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

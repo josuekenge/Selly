@@ -37,14 +37,17 @@ function isRetryableError(error: unknown): boolean {
  * Process a single job
  */
 async function processJob(job: Job): Promise<void> {
+    const startTime = Date.now();
     console.log(`[worker] Processing job ${job.id} for call ${job.call_id} (attempt ${job.attempt_count}/${job.max_attempts})`);
+    console.log(`[worker] Audio path: ${job.audio_object_path}`);
 
     try {
-        // Update stage
-        await updateJobProgress(job.id, { current_stage: 'processing' });
+        // Update stage - downloading
+        await updateJobProgress(job.id, { current_stage: 'downloading' });
 
         // Run the pipeline
         const result = await processCall(job.call_id, job.audio_object_path);
+        const duration = Date.now() - startTime;
 
         if (result.ok) {
             // Mark stages as done
@@ -57,19 +60,27 @@ async function processJob(job: Job): Promise<void> {
 
             // Complete the job
             await completeJob(job.id);
-            console.log(`[worker] Job ${job.id} completed successfully`);
+            console.log(`[worker] Job ${job.id} completed successfully in ${duration}ms`);
+            console.log(`[worker] Results: ${result.transcript.length} utterances, ${result.signals3a.signals.length} 3A signals, ${result.signals3b.signals.length} 3B signals, ${result.recommendations.recommendations.length} recommendations`);
         } else {
             // Pipeline returned error
             const isRetryable = isRetryableError(result.error);
-            await failJob(job.id, result.error ?? 'Unknown pipeline error', isRetryable, job.attempt_count, job.max_attempts);
-            console.log(`[worker] Job ${job.id} failed: ${result.error} (retryable: ${isRetryable})`);
+            const errorMsg = result.error ?? 'Unknown pipeline error';
+            await failJob(job.id, errorMsg, isRetryable, job.attempt_count, job.max_attempts);
+            console.error(`[worker] Job ${job.id} failed after ${duration}ms: ${errorMsg} (retryable: ${isRetryable})`);
         }
     } catch (error) {
         // Unexpected error
+        const duration = Date.now() - startTime;
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
         const isRetryable = isRetryableError(error);
+
         await failJob(job.id, errorMessage, isRetryable, job.attempt_count, job.max_attempts);
-        console.error(`[worker] Job ${job.id} threw error: ${errorMessage} (retryable: ${isRetryable})`);
+        console.error(`[worker] Job ${job.id} threw error after ${duration}ms: ${errorMessage} (retryable: ${isRetryable})`);
+        if (errorStack) {
+            console.error(`[worker] Stack trace:`, errorStack);
+        }
     }
 }
 

@@ -26,6 +26,7 @@ import {
     storeEvents,
 } from './supabase.js';
 import { getCall, updateCall, type TranscriptRecord } from '../api/store.js';
+import { withRetry } from '../utils/retry.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -37,7 +38,7 @@ export interface ProcessingResult {
     signals3a: SignalSet;
     signals3b: AISignalSet;
     recommendations: RecommendationSet;
-    summary: string;
+    summary: StructuredSummary;
     error?: string;
 }
 
@@ -49,77 +50,111 @@ export function isOpenAIConfigured(): boolean {
 }
 
 /**
- * Create an LLM client for OpenAI
+ * Create an LLM client for OpenAI with retry logic
  */
 function createOpenAIClient(): ClassifierLlmClient & RecommenderLlmClient {
     return {
-        async completeJson(args: { system: string; user: string; model?: string }): Promise<unknown> {
+        async completeJson(args: {
+            system: string;
+            user: string;
+            model?: string;
+            maxOutputTokens?: number
+        }): Promise<unknown> {
             if (!OPENAI_API_KEY) {
                 throw new Error('OpenAI API key not configured');
             }
 
             const model = args.model ?? 'gpt-4o-mini';
+            const maxTokens = args.maxOutputTokens ?? 2048;
 
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json',
+            // Wrap OpenAI call with retry logic
+            return withRetry(async () => {
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [
+                            { role: 'system', content: args.system },
+                            { role: 'user', content: args.user },
+                        ],
+                        response_format: { type: 'json_object' },
+                        temperature: 0.3,
+                        max_tokens: maxTokens,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('[openai] Request failed:', response.status, errorText.slice(0, 200));
+                    throw new Error(`OpenAI request failed: ${response.status}`);
+                }
+
+                const result = await response.json() as {
+                    choices: Array<{ message: { content: string } }>;
+                };
+
+                const content = result.choices[0]?.message?.content;
+                if (!content) {
+                    throw new Error('Empty response from OpenAI');
+                }
+
+                return JSON.parse(content);
+            }, {
+                maxAttempts: 3,
+                initialDelayMs: 1000,
+                maxDelayMs: 10000,
+                onRetry: (error, attempt) => {
+                    console.log(`[openai] Retry ${attempt} after error:`, error instanceof Error ? error.message : String(error));
                 },
-                body: JSON.stringify({
-                    model,
-                    messages: [
-                        { role: 'system', content: args.system },
-                        { role: 'user', content: args.user },
-                    ],
-                    response_format: { type: 'json_object' },
-                    temperature: 0.3,
-                }),
             });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error('[openai] Request failed:', response.status);
-                throw new Error(`OpenAI request failed: ${response.status}`);
-            }
-
-            const result = await response.json() as {
-                choices: Array<{ message: { content: string } }>;
-            };
-
-            const content = result.choices[0]?.message?.content;
-            if (!content) {
-                throw new Error('Empty response from OpenAI');
-            }
-
-            return JSON.parse(content);
         },
     };
 }
 
 /**
- * Generate a call summary using OpenAI
+ * Structured summary format for frontend
+ */
+interface StructuredSummary {
+    title: string;
+    bullets: string[];
+    fullText: string;
+}
+
+/**
+ * Generate a call summary using OpenAI with retry logic
+ * Returns a structured summary with title and bullet points
  */
 async function generateSummary(
     transcript: TranscriptRecord[],
     signals3a: SignalSet,
     signals3b: AISignalSet,
     recommendations: RecommendationSet
-): Promise<string> {
+): Promise<StructuredSummary> {
+    const defaultSummary: StructuredSummary = {
+        title: 'Call Summary',
+        bullets: [],
+        fullText: ''
+    };
+
     if (!OPENAI_API_KEY) {
-        return 'Summary unavailable - OpenAI not configured';
+        return { ...defaultSummary, fullText: 'Summary unavailable - OpenAI not configured' };
     }
 
-    const transcriptText = transcript
-        .map(t => `[${t.speaker.toUpperCase()}]: ${t.text}`)
-        .join('\n');
+    try {
+        const transcriptText = transcript
+            .map(t => `[${t.speaker.toUpperCase()}]: ${t.text}`)
+            .join('\n');
 
-    const signalsSummary = [
-        ...signals3a.signals.map(s => s.type),
-        ...signals3b.signals.map(s => `${s.type}: ${s.label}`),
-    ].join(', ');
+        const signalsSummary = [
+            ...signals3a.signals.map(s => s.type),
+            ...signals3b.signals.map(s => `${s.type}: ${s.label}`),
+        ].join(', ');
 
-    const prompt = `Summarize this sales call in 2-3 sentences. Focus on key topics discussed, any objections raised, and next steps if mentioned.
+        const prompt = `Analyze this sales call and provide a structured summary in JSON format.
 
 TRANSCRIPT:
 ${transcriptText}
@@ -128,34 +163,71 @@ DETECTED SIGNALS: ${signalsSummary || 'None'}
 
 TOP RECOMMENDATIONS: ${recommendations.recommendations.map(r => r.title).join(', ') || 'None'}
 
-Provide a concise, actionable summary.`;
+Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
+{
+  "title": "A short, descriptive title for this call (max 8 words)",
+  "bullets": ["Key point 1", "Key point 2", "Key point 3"],
+  "fullText": "A 2-3 sentence summary of the call"
+}`;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-                { role: 'user', content: prompt },
-            ],
-            max_tokens: 200,
-            temperature: 0.5,
-        }),
-    });
+        return await withRetry(async () => {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        { role: 'user', content: prompt },
+                    ],
+                    max_tokens: 300,
+                    temperature: 0.5,
+                }),
+            });
 
-    if (!response.ok) {
-        console.error('[openai] Summary generation failed:', response.status);
-        return 'Summary generation failed';
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[openai] Summary generation failed:', response.status, errorText.slice(0, 200));
+                throw new Error(`Summary generation failed: ${response.status}`);
+            }
+
+            const result = await response.json() as {
+                choices: Array<{ message: { content: string } }>;
+            };
+
+            const content = result.choices[0]?.message?.content ?? '';
+
+            // Parse JSON response
+            try {
+                const parsed = JSON.parse(content) as StructuredSummary;
+                return {
+                    title: parsed.title || 'Call Summary',
+                    bullets: Array.isArray(parsed.bullets) ? parsed.bullets : [],
+                    fullText: parsed.fullText || content
+                };
+            } catch {
+                // Fallback if JSON parsing fails
+                console.warn('[openai] Failed to parse structured summary, using raw text');
+                return {
+                    title: 'Call Summary',
+                    bullets: [],
+                    fullText: content
+                };
+            }
+        }, {
+            maxAttempts: 3,
+            initialDelayMs: 1000,
+            maxDelayMs: 10000,
+            onRetry: (error, attempt) => {
+                console.log(`[openai] Summary retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+            },
+        });
+    } catch (error) {
+        console.error('[openai] Summary generation failed after retries:', error);
+        return { ...defaultSummary, fullText: 'Summary generation failed' };
     }
-
-    const result = await response.json() as {
-        choices: Array<{ message: { content: string } }>;
-    };
-
-    return result.choices[0]?.message?.content ?? 'No summary generated';
 }
 
 /**
@@ -222,20 +294,47 @@ export async function processCall(
     updateCall(sessionId, { status: 'processing' });
 
     try {
-        // Step 1: Download audio from Supabase
+        // Step 1: Download audio from Supabase with retry
         console.log('[pipeline] Step 1: Downloading audio...');
         if (!isSupabaseConfigured()) {
             throw new Error('Supabase not configured - cannot download audio');
         }
-        const { data: audioData } = await downloadAudio(audioObjectPath);
+
+        const { data: audioData } = await withRetry(
+            () => downloadAudio(audioObjectPath),
+            {
+                maxAttempts: 3,
+                initialDelayMs: 2000,
+                maxDelayMs: 10000,
+                onRetry: (error, attempt) => {
+                    console.log(`[pipeline] Audio download retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                },
+            }
+        );
         console.log(`[pipeline] Downloaded ${audioData.byteLength} bytes`);
 
-        // Step 2: Transcribe with Deepgram
+        // Validate audio data
+        if (!audioData || audioData.byteLength === 0) {
+            throw new Error('Downloaded audio is empty');
+        }
+
+        // Step 2: Transcribe with Deepgram with retry
         console.log('[pipeline] Step 2: Transcribing...');
         if (!isDeepgramConfigured()) {
             throw new Error('Deepgram not configured - cannot transcribe');
         }
-        const segments = await transcribeAudio(audioData);
+
+        const segments = await withRetry(
+            () => transcribeAudio(audioData),
+            {
+                maxAttempts: 3,
+                initialDelayMs: 2000,
+                maxDelayMs: 15000,
+                onRetry: (error, attempt) => {
+                    console.log(`[pipeline] Transcription retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                },
+            }
+        );
         console.log(`[pipeline] Got ${segments.length} transcript segments`);
 
         // Convert to TranscriptRecord format for storage
@@ -266,28 +365,108 @@ export async function processCall(
 
         // Step 6: Extract deterministic signals (Step 3A)
         console.log('[pipeline] Step 6: Extracting signals (Step 3A)...');
-        const signals3a = extractSignals(context);
-        console.log(`[pipeline] Extracted ${signals3a.signals.length} deterministic signals`);
+        let signals3a: SignalSet;
+        try {
+            signals3a = extractSignals(context);
+            console.log(`[pipeline] Extracted ${signals3a.signals.length} deterministic signals`);
+        } catch (error) {
+            console.error('[pipeline] Failed to extract deterministic signals:', error);
+            // Create empty signal set as fallback
+            signals3a = {
+                call: { sessionId, lastEventAt: Date.now() },
+                signals: [],
+                version: '3A.0',
+            };
+        }
 
-        // Step 7: Classify AI signals (Step 3B)
+        // Step 7: Classify AI signals (Step 3B) - gracefully degrade if unavailable
         console.log('[pipeline] Step 7: Classifying AI signals (Step 3B)...');
-        const llmClient = createOpenAIClient();
-        const signals3b = await classifyAISignals(llmClient, context);
-        console.log(`[pipeline] Classified ${signals3b.signals.length} AI signals`);
+        let signals3b: AISignalSet;
+        if (!isOpenAIConfigured()) {
+            console.log('[pipeline] OpenAI not configured, skipping AI signal classification');
+            signals3b = {
+                call: { sessionId, lastEventAt: Date.now() },
+                signals: [],
+                model: 'none',
+                version: '3B.0',
+            };
+        } else {
+            try {
+                const llmClient = createOpenAIClient();
+                signals3b = await withRetry(
+                    () => classifyAISignals(llmClient, context),
+                    {
+                        maxAttempts: 2,
+                        initialDelayMs: 2000,
+                        maxDelayMs: 10000,
+                        onRetry: (error, attempt) => {
+                            console.log(`[pipeline] AI signals retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                        },
+                    }
+                );
+                console.log(`[pipeline] Classified ${signals3b.signals.length} AI signals`);
+            } catch (error) {
+                console.error('[pipeline] Failed to classify AI signals, continuing with empty set:', error);
+                signals3b = {
+                    call: { sessionId, lastEventAt: Date.now() },
+                    signals: [],
+                    model: 'error',
+                    version: '3B.0',
+                };
+            }
+        }
 
-        // Step 8: Generate recommendations (Step 4)
+        // Step 8: Generate recommendations (Step 4) - gracefully degrade if unavailable
         console.log('[pipeline] Step 8: Generating recommendations (Step 4)...');
-        const recommendations = await generateRecommendations(llmClient, {
-            ctx: context,
-            signals3a,
-            signals3b,
-        });
-        console.log(`[pipeline] Generated ${recommendations.recommendations.length} recommendations`);
+        let recommendations: RecommendationSet;
+        if (!isOpenAIConfigured()) {
+            console.log('[pipeline] OpenAI not configured, skipping recommendations');
+            recommendations = {
+                call: { sessionId, lastEventAt: Date.now() },
+                recommendations: [],
+                model: 'none',
+                version: '4.0',
+            };
+        } else {
+            try {
+                const llmClient = createOpenAIClient();
+                recommendations = await withRetry(
+                    () => generateRecommendations(llmClient, {
+                        ctx: context,
+                        signals3a,
+                        signals3b,
+                    }),
+                    {
+                        maxAttempts: 2,
+                        initialDelayMs: 2000,
+                        maxDelayMs: 10000,
+                        onRetry: (error, attempt) => {
+                            console.log(`[pipeline] Recommendations retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                        },
+                    }
+                );
+                console.log(`[pipeline] Generated ${recommendations.recommendations.length} recommendations`);
+            } catch (error) {
+                console.error('[pipeline] Failed to generate recommendations, continuing with empty set:', error);
+                recommendations = {
+                    call: { sessionId, lastEventAt: Date.now() },
+                    recommendations: [],
+                    model: 'error',
+                    version: '4.0',
+                };
+            }
+        }
 
-        // Step 9: Generate summary
+        // Step 9: Generate summary - gracefully degrade if unavailable
         console.log('[pipeline] Step 9: Generating summary...');
-        const summary = await generateSummary(transcript, signals3a, signals3b, recommendations);
-        console.log('[pipeline] Summary generated');
+        let summary: StructuredSummary;
+        if (!isOpenAIConfigured()) {
+            summary = { title: 'Call Summary', bullets: [], fullText: 'Summary unavailable - OpenAI not configured' };
+            console.log('[pipeline] OpenAI not configured, skipping summary');
+        } else {
+            summary = await generateSummary(transcript, signals3a, signals3b, recommendations);
+            console.log('[pipeline] Summary generated');
+        }
 
         // Step 10: Store results
         console.log('[pipeline] Step 10: Storing results...');
@@ -303,17 +482,34 @@ export async function processCall(
             recommendations,
         });
 
-        // Store in Supabase if configured
+        // Store in Supabase if configured - with retry and graceful degradation
         if (isSupabaseConfigured()) {
-            try {
-                // Update call record
-                await updateCallRecord(sessionId, {
-                    status: 'ended',
-                    ended_at: new Date().toISOString(),
-                    duration_ms: Date.now() - callStartTime,
-                });
+            console.log('[pipeline] Storing results in Supabase...');
 
-                // Store utterances
+            // Update call record - critical, retry
+            try {
+                await withRetry(
+                    () => updateCallRecord(sessionId, {
+                        status: 'ended',
+                        ended_at: new Date().toISOString(),
+                        duration_ms: Date.now() - callStartTime,
+                    }),
+                    {
+                        maxAttempts: 3,
+                        initialDelayMs: 1000,
+                        onRetry: (error, attempt) => {
+                            console.log(`[pipeline] Call record update retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                        },
+                    }
+                );
+                console.log('[pipeline] Updated call record');
+            } catch (err) {
+                console.error('[pipeline] Failed to update call record:', err);
+                // Critical but continue with other storage
+            }
+
+            // Store utterances - critical, retry
+            try {
                 const utteranceRows = transcript.map((t, i) => ({
                     seq: i,
                     speaker: t.speaker as 'rep' | 'prospect' | 'unknown',
@@ -322,17 +518,56 @@ export async function processCall(
                     startedAtMs: t.startedAt - callStartTime,
                     endedAtMs: t.endedAt - callStartTime,
                 }));
-                await storeUtterances(sessionId, workspaceId, utteranceRows);
 
-                // Store summary
-                await storeSummary(sessionId, workspaceId, { text: summary }, '1.0', 'gpt-4o-mini');
+                await withRetry(
+                    () => storeUtterances(sessionId, workspaceId, utteranceRows),
+                    {
+                        maxAttempts: 3,
+                        initialDelayMs: 1000,
+                        onRetry: (error, attempt) => {
+                            console.log(`[pipeline] Utterances storage retry ${attempt}:`, error instanceof Error ? error.message : String(error));
+                        },
+                    }
+                );
+                console.log('[pipeline] Stored utterances');
+            } catch (err) {
+                console.error('[pipeline] Failed to store utterances:', err);
+            }
 
-                // Store signals and recommendations
+            // Store summary - non-critical
+            try {
+                await storeSummary(sessionId, workspaceId, { text: summary.fullText }, '1.0', 'gpt-4o-mini');
+                console.log('[pipeline] Stored summary');
+            } catch (err) {
+                console.error('[pipeline] Failed to store summary:', err);
+            }
+
+            // Store signals 3A - non-critical
+            try {
                 await storeSignals3A(sessionId, workspaceId, signals3a, '1.0');
-                await storeSignals3B(sessionId, workspaceId, signals3b, '1.0', 'gpt-4o-mini');
-                await storeRecommendations(sessionId, workspaceId, recommendations, '1.0', 'gpt-4o-mini');
+                console.log('[pipeline] Stored 3A signals');
+            } catch (err) {
+                console.error('[pipeline] Failed to store 3A signals:', err);
+            }
 
-                // Store events for replay
+            // Store signals 3B - non-critical
+            try {
+                await storeSignals3B(sessionId, workspaceId, signals3b, '1.0', signals3b.model);
+                console.log('[pipeline] Stored 3B signals');
+            } catch (err) {
+                console.error('[pipeline] Failed to store 3B signals:', err);
+            }
+
+            // Store recommendations - non-critical
+            try {
+                await storeRecommendations(sessionId, workspaceId, recommendations, '1.0', recommendations.model);
+                console.log('[pipeline] Stored recommendations');
+            } catch (err) {
+                console.error('[pipeline] Failed to store recommendations:', err);
+            }
+
+            // Store events for replay - non-critical
+            try {
                 const eventRows = events.map((e, i) => ({
                     seq: i,
                     type: e.type,
@@ -343,13 +578,16 @@ export async function processCall(
                     ).toISOString(),
                     payload: e.payload,
                 }));
-                await storeEvents(sessionId, workspaceId, eventRows);
 
-                console.log('[pipeline] Stored all results in Supabase');
+                await storeEvents(sessionId, workspaceId, eventRows);
+                console.log('[pipeline] Stored events');
             } catch (err) {
-                console.error('[pipeline] Failed to store in Supabase:', err);
-                // Continue anyway, we have in-memory storage
+                console.error('[pipeline] Failed to store events:', err);
             }
+
+            console.log('[pipeline] Supabase storage complete');
+        } else {
+            console.log('[pipeline] Supabase not configured, skipping cloud storage');
         }
 
         console.log(`[pipeline] Processing complete for ${sessionId}`);
@@ -381,7 +619,7 @@ export async function processCall(
             signals3a: { call: { sessionId, lastEventAt: 0 }, signals: [], version: '' },
             signals3b: { call: { sessionId, lastEventAt: 0 }, signals: [], model: '', version: '' },
             recommendations: { call: { sessionId, lastEventAt: 0 }, recommendations: [], model: '', version: '' },
-            summary: '',
+            summary: { title: 'Error', bullets: [], fullText: '' },
             error: errorMessage,
         };
     }

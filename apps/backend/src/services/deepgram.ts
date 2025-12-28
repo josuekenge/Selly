@@ -3,6 +3,8 @@
 // Multichannel support for MIC (left/rep) + LOOPBACK (right/prospect)
 // NO secrets in logs
 
+import { withRetry } from '../utils/retry.js';
+
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
 
@@ -62,7 +64,7 @@ export function isDeepgramConfigured(): boolean {
 }
 
 /**
- * Transcribe audio using Deepgram prerecorded API
+ * Transcribe audio using Deepgram prerecorded API with retry logic
  * Expects stereo audio: left channel = MIC (rep), right channel = LOOPBACK (prospect)
  */
 export async function transcribeAudio(audioData: ArrayBuffer): Promise<TranscriptSegment[]> {
@@ -73,44 +75,44 @@ export async function transcribeAudio(audioData: ArrayBuffer): Promise<Transcrip
     console.log('[deepgram] Starting transcription...');
     console.log(`[deepgram] Audio size: ${audioData.byteLength} bytes`);
 
-    const response = await fetch(DEEPGRAM_API_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Token ${DEEPGRAM_API_KEY}`,
-            'Content-Type': 'audio/wav',
+    // Wrap the transcription call with retry logic
+    const result = await withRetry(async () => {
+        // Build URL with query params
+        const url = new URL(DEEPGRAM_API_URL);
+        url.searchParams.set('model', 'nova-2');
+        url.searchParams.set('multichannel', 'true');
+        url.searchParams.set('utterances', 'true');
+        url.searchParams.set('punctuate', 'true');
+        url.searchParams.set('smart_format', 'true');
+
+        const response = await fetch(url.toString(), {
+            method: 'POST',
+            headers: {
+                'Authorization': `Token ${DEEPGRAM_API_KEY}`,
+                'Content-Type': 'audio/wav',
+            },
+            body: audioData,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[deepgram] Transcription failed:', response.status, errorText.slice(0, 200));
+            throw new Error(`Deepgram transcription failed: ${response.status} - ${errorText.substring(0, 100)}`);
+        }
+
+        const result = (await response.json()) as DeepgramResult;
+
+        console.log(`[deepgram] Transcription complete. Channels: ${result.metadata.channels}, Duration: ${result.metadata.duration}s`);
+
+        return result;
+    }, {
+        maxAttempts: 3,
+        initialDelayMs: 2000,
+        maxDelayMs: 15000,
+        onRetry: (error, attempt) => {
+            console.log(`[deepgram] Retry ${attempt} after error:`, error instanceof Error ? error.message : String(error));
         },
-        body: audioData,
-        // Query params for multichannel and utterances
-        // @ts-expect-error - fetch with query params
-        url: `${DEEPGRAM_API_URL}?model=nova-2&multichannel=true&utterances=true&punctuate=true&diarize=false`,
     });
-
-    // Build URL with query params
-    const url = new URL(DEEPGRAM_API_URL);
-    url.searchParams.set('model', 'nova-2');
-    url.searchParams.set('multichannel', 'true');
-    url.searchParams.set('utterances', 'true');
-    url.searchParams.set('punctuate', 'true');
-    url.searchParams.set('smart_format', 'true');
-
-    const actualResponse = await fetch(url.toString(), {
-        method: 'POST',
-        headers: {
-            'Authorization': `Token ${DEEPGRAM_API_KEY}`,
-            'Content-Type': 'audio/wav',
-        },
-        body: audioData,
-    });
-
-    if (!actualResponse.ok) {
-        const errorText = await actualResponse.text();
-        console.error('[deepgram] Transcription failed:', actualResponse.status);
-        throw new Error(`Deepgram transcription failed: ${actualResponse.status}`);
-    }
-
-    const result = (await actualResponse.json()) as DeepgramResult;
-
-    console.log(`[deepgram] Transcription complete. Channels: ${result.metadata.channels}, Duration: ${result.metadata.duration}s`);
 
     // Convert Deepgram result to our transcript format
     return convertDeepgramResult(result);

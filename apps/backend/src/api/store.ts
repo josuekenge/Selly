@@ -10,7 +10,7 @@ export interface CallRecord {
     endedAt?: number;
     audioPath?: string;
     transcript?: TranscriptRecord[];
-    summary?: string;
+    summary?: { title: string; bullets: string[]; fullText: string } | string;
     signals3a?: unknown;
     signals3b?: unknown;
     recommendations?: unknown;

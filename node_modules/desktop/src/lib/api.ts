@@ -200,38 +200,107 @@ export interface RecommendationEvent {
 /**
  * Subscribe to real-time recommendations stream from Backend
  * Returns unsubscribe function to close the connection
+ *
+ * Features:
+ * - Automatic reconnection with exponential backoff
+ * - Connection state tracking
+ * - Error handling and recovery
  */
 export function subscribeToRecommendations(
     sessionId: string,
     onEvent: (event: RecommendationEvent) => void,
-    onError?: (error: Error) => void
+    onError?: (error: Error) => void,
+    onConnectionStateChange?: (state: 'connecting' | 'connected' | 'disconnected' | 'error') => void
 ): () => void {
-    const eventSource = new EventSource(
-        `${BACKEND_URL}/api/calls/${sessionId}/recommendations-stream`
-    );
+    let eventSource: EventSource | null = null;
+    let shouldReconnect = true;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const baseReconnectDelay = 1000; // 1 second
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    eventSource.addEventListener('message', (event) => {
-        try {
-            const data = JSON.parse(event.data) as RecommendationEvent;
-            onEvent(data);
-        } catch (err) {
-            console.error('[api] Failed to parse recommendation SSE event:', err);
-            onError?.(new Error('Failed to parse recommendation SSE event'));
-        }
-    });
+    const connect = () => {
+        if (!shouldReconnect) return;
 
-    eventSource.addEventListener('error', (event) => {
-        if (eventSource.readyState === EventSource.CLOSED) {
-            console.log('[api] Recommendations SSE connection closed');
-        } else {
-            console.error('[api] Recommendations SSE connection error:', event);
-            onError?.(new Error('Recommendations SSE connection error'));
-        }
-    });
+        onConnectionStateChange?.('connecting');
+
+        eventSource = new EventSource(
+            `${BACKEND_URL}/api/calls/${sessionId}/recommendations-stream`
+        );
+
+        eventSource.addEventListener('open', () => {
+            console.log('[api] Recommendations SSE connection established');
+            reconnectAttempts = 0; // Reset on successful connection
+            onConnectionStateChange?.('connected');
+        });
+
+        eventSource.addEventListener('message', (event) => {
+            try {
+                const data = JSON.parse(event.data) as RecommendationEvent;
+
+                // Handle connection-established event
+                if (data.type === 'connection-established') {
+                    console.log('[api] Recommendations SSE connection confirmed');
+                    onConnectionStateChange?.('connected');
+                    return;
+                }
+
+                onEvent(data);
+            } catch (err) {
+                console.error('[api] Failed to parse recommendation SSE event:', err);
+                onError?.(new Error('Failed to parse recommendation SSE event'));
+            }
+        });
+
+        eventSource.addEventListener('error', (event) => {
+            if (eventSource?.readyState === EventSource.CLOSED) {
+                console.log('[api] Recommendations SSE connection closed');
+                onConnectionStateChange?.('disconnected');
+
+                // Attempt to reconnect
+                if (shouldReconnect && reconnectAttempts < maxReconnectAttempts) {
+                    const delay = Math.min(
+                        baseReconnectDelay * Math.pow(2, reconnectAttempts),
+                        10000 // Max 10 seconds
+                    );
+                    reconnectAttempts++;
+
+                    console.log(`[api] Reconnecting recommendations SSE in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+
+                    reconnectTimeout = setTimeout(() => {
+                        connect();
+                    }, delay);
+                } else if (reconnectAttempts >= maxReconnectAttempts) {
+                    console.error('[api] Max reconnection attempts reached for recommendations SSE');
+                    onConnectionStateChange?.('error');
+                    onError?.(new Error('Failed to establish recommendations connection after multiple attempts'));
+                }
+            } else {
+                console.error('[api] Recommendations SSE connection error:', event);
+                onConnectionStateChange?.('error');
+                onError?.(new Error('Recommendations SSE connection error'));
+            }
+        });
+    };
+
+    // Initial connection
+    connect();
 
     // Return unsubscribe function
     return () => {
-        eventSource.close();
+        shouldReconnect = false;
+
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+        }
+
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+
         console.log('[api] Recommendations SSE connection closed by client');
+        onConnectionStateChange?.('disconnected');
     };
 }

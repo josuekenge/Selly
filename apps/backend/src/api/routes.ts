@@ -9,6 +9,7 @@ import {
     getCall,
     updateCall,
     hasCall,
+    type TranscriptRecord,
 } from './store.js';
 import {
     isSupabaseConfigured,
@@ -300,7 +301,7 @@ router.post('/calls/:sessionId/trigger-recommendations', async (req: Request, re
             sessionId,
             workspaceId,
             question: body.question,
-            recentTranscript: body.recentTranscript || [],
+            recentTranscript: (body.recentTranscript || []) as TranscriptRecord[],
             timestamp: body.timestamp || Date.now(),
         });
 
@@ -308,6 +309,21 @@ router.post('/calls/:sessionId/trigger-recommendations', async (req: Request, re
         if (result.ok && result.recommendations.recommendations.length > 0) {
             // Convert to SSE event format
             for (const rec of result.recommendations.recommendations) {
+                // Map recommendation type to SSE category
+                const categoryMap: Record<string, 'answer' | 'objection' | 'next-step'> = {
+                    'next_best_response': 'answer',
+                    'discovery_question': 'answer',
+                    'objection_handling': 'objection',
+                    'positioning_point': 'answer',
+                    'next_step': 'next-step',
+                };
+                const category = categoryMap[rec.type] ?? 'answer';
+
+                // Map confidence to priority
+                const priority: 'high' | 'medium' | 'low' =
+                    rec.confidence >= 0.8 ? 'high' :
+                        rec.confidence >= 0.5 ? 'medium' : 'low';
+
                 recommendationSSEManager.broadcastRecommendation(sessionId, {
                     type: 'recommendation.generated',
                     sessionId,
@@ -315,8 +331,8 @@ router.post('/calls/:sessionId/trigger-recommendations', async (req: Request, re
                     recommendation: {
                         title: rec.title,
                         message: rec.script || rec.title,
-                        priority: rec.priority === 'high' ? 'high' : rec.priority === 'medium' ? 'medium' : 'low',
-                        category: rec.category === 'answer' ? 'answer' : rec.category === 'objection' ? 'objection' : 'next-step',
+                        priority,
+                        category,
                     },
                 });
             }

@@ -1,9 +1,98 @@
-// Retrieval Module Skeleton
+// Retrieval Module
 // Handles knowledge retrieval for suggestions
-// 
+//
 // IMPORTANT CONSTRAINT (from Spec.md Rule 6):
 // Retrieval may ONLY read from knowledge read-models or embeddings,
 // never mutate or enrich source documents.
-// Implementation: Future phase
-export {};
+// In-memory implementation with simple keyword matching
+import { knowledgeService } from '../knowledge/index.js';
+// ============================================
+// IN-MEMORY IMPLEMENTATION
+// ============================================
+class RetrievalServiceImpl {
+    /**
+     * Retrieve relevant knowledge chunks for a query
+     * Uses simple keyword matching - production would use vector similarity
+     */
+    async retrieveContext(workspaceId, query, options = {}) {
+        const limit = options.limit ?? 5;
+        const minSimilarity = options.minSimilarity ?? 0.1;
+        // Get all documents for workspace
+        const documents = await knowledgeService.listDocuments(workspaceId);
+        // Collect all chunks
+        const allChunks = [];
+        for (const doc of documents) {
+            if (doc.chunks) {
+                for (const chunk of doc.chunks) {
+                    allChunks.push({ chunk, documentId: doc.id });
+                }
+            }
+        }
+        if (allChunks.length === 0) {
+            console.log(`[retrieval] No knowledge chunks found for workspace ${workspaceId}`);
+            return [];
+        }
+        // Score chunks by keyword similarity
+        const scoredChunks = allChunks.map(({ chunk, documentId }) => {
+            const similarity = this.calculateKeywordSimilarity(query, chunk.content);
+            return {
+                chunkId: chunk.id,
+                documentId,
+                content: chunk.content,
+                similarity,
+                metadata: chunk.metadata,
+            };
+        });
+        // Filter and sort by similarity
+        const results = scoredChunks
+            .filter(r => r.similarity >= minSimilarity)
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, limit);
+        console.log(`[retrieval] Found ${results.length} chunks for query "${query.substring(0, 50)}..."`);
+        return results;
+    }
+    /**
+     * Calculate keyword similarity between query and content
+     * Production version would use vector embeddings and cosine similarity
+     */
+    calculateKeywordSimilarity(query, content) {
+        const queryWords = this.tokenize(query.toLowerCase());
+        const contentWords = this.tokenize(content.toLowerCase());
+        if (queryWords.length === 0)
+            return 0;
+        // Count matching words
+        let matchCount = 0;
+        for (const word of queryWords) {
+            if (contentWords.includes(word)) {
+                matchCount++;
+            }
+        }
+        // Simple ratio: matches / total query words
+        const similarity = matchCount / queryWords.length;
+        return similarity;
+    }
+    /**
+     * Tokenize text into words
+     */
+    tokenize(text) {
+        return text
+            .split(/\W+/)
+            .filter(word => word.length > 2) // Filter out short words
+            .filter(word => !this.isStopWord(word));
+    }
+    /**
+     * Check if word is a common stop word
+     */
+    isStopWord(word) {
+        const stopWords = new Set([
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'is', 'are', 'was', 'were', 'been', 'be', 'have', 'has',
+            'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may',
+            'might', 'must', 'can', 'this', 'that', 'these', 'those', 'it', 'its'
+        ]);
+        return stopWords.has(word);
+    }
+}
+// Singleton instance
+export const retrievalService = new RetrievalServiceImpl();
 //# sourceMappingURL=index.js.map

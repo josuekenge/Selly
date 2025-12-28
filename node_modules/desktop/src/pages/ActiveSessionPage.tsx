@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Home, MessageSquare, Send, Zap, Search, RefreshCw, Copy } from 'lucide-react';
+import RecommendationsPanel, { RecommendationItem } from '../components/RecommendationsPanel';
 import './ActiveSessionPage.css';
 
 interface ActiveSessionPageProps {
@@ -20,12 +21,42 @@ export default function ActiveSessionPage({ sessionId, duration, onStop }: Activ
         { speaker: 'Prospect', text: "Sounds good, show me what you got." }
     ]);
 
+    // Mock recommendations data - in production this would come from SSE stream
+    const [recommendations, setRecommendations] = useState<RecommendationItem[]>([
+        {
+            id: '1',
+            type: 'next_best_response',
+            title: 'Address their dashboard question',
+            script: 'Great! Let me show you the analytics dashboard. It gives you real-time insights into your sales pipeline and helps you identify bottlenecks instantly.',
+            confidence: 0.92,
+            createdAt: Date.now() - 30000,
+            warnings: []
+        },
+        {
+            id: '2',
+            type: 'discovery_question',
+            title: 'Ask about current workflow',
+            script: 'Before I dive in, how are you currently tracking your sales metrics? This will help me show you the most relevant features.',
+            confidence: 0.78,
+            createdAt: Date.now() - 60000,
+            warnings: []
+        }
+    ]);
+
     // Debug logging for sessionId to satisfy linter and verify prop passing
     console.debug('Active session:', sessionId);
 
     const copyTranscript = () => {
         const text = mockTranscript.map(m => `${m.speaker}: ${m.text}`).join('\n');
         navigator.clipboard.writeText(text);
+    };
+
+    const handleDismissRecommendation = (id: string) => {
+        setRecommendations(prev => prev.filter(rec => rec.id !== id));
+    };
+
+    const handleDismissAllRecommendations = () => {
+        setRecommendations([]);
     };
 
     return (
@@ -39,7 +70,14 @@ export default function ActiveSessionPage({ sessionId, duration, onStop }: Activ
                 </div>
             </div>
 
-            {/* Overlay Panel (Widget) */}
+            {/* Recommendations Panel - Left Side */}
+            <RecommendationsPanel
+                recommendations={recommendations}
+                onDismiss={handleDismissRecommendation}
+                onDismissAll={handleDismissAllRecommendations}
+            />
+
+            {/* Overlay Panel (Widget) - Right Side */}
             <div className="overlay-panel">
                 <div className="overlay-header">
                     <div className="overlay-tabs">

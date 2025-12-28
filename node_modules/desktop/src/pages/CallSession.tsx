@@ -15,8 +15,10 @@ import {
 } from '../lib/api';
 import { buildViewModel, type CallInsightsViewModel } from '../lib/viewModel';
 import { copyToClipboard } from '../lib/clipboard';
-import RecorderPill from '../components/RecorderPill';
 import OverlayPanel from '../components/OverlayPanel';
+import ActiveSessionView from '../components/ActiveSessionView';
+import ErrorAlert from '../components/ErrorAlert';
+import Dashboard from './Dashboard';
 
 type State = 'idle' | 'starting' | 'recording' | 'stopping' | 'uploading' | 'processing' | 'ready' | 'error';
 
@@ -35,7 +37,7 @@ export default function CallSession() {
   const [viewModel, setViewModel] = useState<CallInsightsViewModel | null>(null);
   const [transcriptUtterances, setTranscriptUtterances] = useState<TranscriptUtterance[]>([]);
   const [unsubscribeSSE, setUnsubscribeSSE] = useState<(() => void) | null>(null);
-  const [liveRecommendations, setLiveRecommendations] = useState<RecommendationEvent['recommendation'][]>([]);
+  const [liveRecommendations, setLiveRecommendations] = useState<NonNullable<RecommendationEvent['recommendation']>[]>([]);
   const [unsubscribeRecommendations, setUnsubscribeRecommendations] = useState<(() => void) | null>(null);
 
   const handleStart = async () => {
@@ -54,8 +56,8 @@ export default function CallSession() {
             // Map speaker to SpeakerLabel format
             const speakerLabel: SpeakerLabel =
               event.speaker === 'rep' ? 'Rep' :
-              event.speaker === 'prospect' ? 'Prospect' :
-              'Unknown';
+                event.speaker === 'prospect' ? 'Prospect' :
+                  'Unknown';
 
             // Add new utterance to state
             setTranscriptUtterances(prev => [...prev, {
@@ -76,11 +78,18 @@ export default function CallSession() {
       const recommendationCleanup = subscribeToRecommendations(
         newSessionId,
         (event: RecommendationEvent) => {
+          console.log('[CallSession] Received recommendation event:', event);
+
           if (event.type === 'recommendation.generated' && event.recommendation) {
-            setLiveRecommendations(prev => [...prev, event.recommendation!]);
+            setLiveRecommendations(prev => {
+              // Limit to last 10 recommendations to avoid memory issues
+              const newRecs = [...prev, event.recommendation!];
+              return newRecs.slice(-10);
+            });
           } else if (event.type === 'recommendation.updated' && event.recommendation) {
             // Replace the last recommendation with updated version
             setLiveRecommendations(prev => {
+              if (prev.length === 0) return [event.recommendation!];
               const newRecs = [...prev];
               newRecs[newRecs.length - 1] = event.recommendation!;
               return newRecs;
@@ -89,7 +98,12 @@ export default function CallSession() {
         },
         (error) => {
           console.error('Recommendations SSE error:', error);
-          // Don't fail the entire session on SSE error
+          // Don't fail the entire session on SSE error, just update state
+          // setRecommendationsConnectionState('error');
+        },
+        (connectionState) => {
+          console.log('[CallSession] Recommendations connection state:', connectionState);
+          // setRecommendationsConnectionState(connectionState);
         }
       );
       setUnsubscribeRecommendations(() => recommendationCleanup);
@@ -241,38 +255,19 @@ export default function CallSession() {
     }
   };
 
-  const currentDate = new Date().toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
 
   if (state === 'idle') {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <button
-          onClick={handleStart}
-          className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white text-lg font-semibold rounded-lg transition-colors"
-        >
-          Start Call
-        </button>
-      </div>
-    );
+    return <Dashboard onStartCall={handleStart} />;
   }
 
   if (state === 'error') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <div className="max-w-md text-center">
-          <h2 className="text-2xl font-bold mb-4">Error</h2>
-          <p className="text-gray-300 mb-6">{errorMessage}</p>
-          <button
-            onClick={handleReset}
-            className="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-          >
-            Reset
-          </button>
-        </div>
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-8">
+        <ErrorAlert
+          message={errorMessage}
+          onRetry={handleReset}
+          onDismiss={handleReset}
+        />
       </div>
     );
   }
@@ -294,25 +289,19 @@ export default function CallSession() {
       .join('\n');
 
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-8">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold mb-2">Active session</h1>
-          <p className="text-gray-400 mb-8">{currentDate}</p>
-          {transcriptUtterances.length > 0 ? (
-            <p className="text-gray-300 text-lg">Live transcript active ({transcriptUtterances.length} utterances)</p>
-          ) : (
-            <p className="text-gray-300 text-lg">Listening for speech...</p>
-          )}
-        </div>
+      <>
+        {/* Full-screen Active Session backdrop */}
+        <ActiveSessionView onStop={handleStop} />
 
-        <RecorderPill onStop={handleStop} />
+        {/* Draggable Overlay Panel */}
         <OverlayPanel
           transcriptUtterances={transcriptUtterances}
           transcriptText={transcriptText}
           liveRecommendations={liveRecommendations}
           isRecording={true}
+          onStop={handleStop}
         />
-      </div>
+      </>
     );
   }
 

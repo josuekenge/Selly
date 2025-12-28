@@ -8,11 +8,13 @@ import { DeepgramStream } from '../transcription/deepgramStream.js';
 import type { TranscriptStreamEvent } from '../transcription/deepgramTypes.js';
 import type { StreamingSession } from '../transcription/TranscriptionTypes.js';
 import { QuestionDetector } from '../intent/QuestionDetector.js';
+import { withRetry, logError } from '../utils/errors.js';
 
 const SIDECAR_PATH = join(__dirname, '..', '..', 'native', 'win-audio-capture', 'target', 'release', 'win-audio-capture.exe');
 const RECORDINGS_DIR = join(__dirname, '..', '..', 'recordings');
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const MAX_TRANSCRIPT_BUFFER = 20; // Keep last 20 utterances for context
+const BACKEND_TIMEOUT_MS = 3000; // Don't block transcription for backend calls
 
 interface PCMFrame {
     sequence: number;
@@ -30,6 +32,7 @@ interface TranscriptUtterance {
 
 /**
  * Trigger live recommendations on the backend when a question is detected
+ * Uses retry logic and graceful degradation - never throws
  */
 async function triggerLiveRecommendations(
     sessionId: string,
@@ -37,29 +40,50 @@ async function triggerLiveRecommendations(
     transcriptBuffer: TranscriptUtterance[]
 ): Promise<void> {
     try {
-        const response = await fetch(`${BACKEND_URL}/api/calls/${sessionId}/trigger-recommendations`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
+        await withRetry(async () => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/calls/${sessionId}/trigger-recommendations`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question,
+                        recentTranscript: transcriptBuffer,
+                        timestamp: Date.now(),
+                    }),
+                    signal: controller.signal,
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`Backend returned ${response.status}`);
+                }
+
+                const result = await response.json() as { ok?: boolean };
+                console.log(`[streamCapture:${sessionId}] Recommendations triggered: ${result.ok ? 'success' : 'failed'}`);
+            } catch (error) {
+                clearTimeout(timeoutId);
+                throw error;
+            }
+        }, {
+            maxAttempts: 2,
+            initialDelayMs: 500,
+            onRetry: (error, attempt) => {
+                console.log(`[streamCapture:${sessionId}] Retry ${attempt} for backend call: ${error instanceof Error ? error.message : String(error)}`);
             },
-            body: JSON.stringify({
-                question,
-                recentTranscript: transcriptBuffer,
-                timestamp: Date.now(),
-            }),
         });
-
-        if (!response.ok) {
-            throw new Error(`Backend returned ${response.status}`);
-        }
-
-        const result = await response.json();
-        console.log(`[streamCapture:${sessionId}] Recommendations triggered: ${result.ok ? 'success' : 'failed'}`);
     } catch (error) {
-        console.error(`[streamCapture:${sessionId}] Error calling backend:`, error);
-        throw error;
+        // Log but don't throw - graceful degradation
+        logError(error, `streamCapture:${sessionId}:backend`);
+        console.warn(`[streamCapture:${sessionId}] Backend unavailable, continuing without recommendations`);
     }
 }
+
 
 /**
  * PCM Stream Reader

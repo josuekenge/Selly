@@ -1,6 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { copyToClipboard } from '../lib/clipboard';
 import type { SpeakerLabel } from '../lib/viewModel';
+import {
+  Pause,
+  Square,
+  X,
+  MessageSquare,
+  FileText,
+  Send,
+  Sparkles,
+  Copy,
+  ChevronDown,
+  Wand2,
+  Cpu,
+  GripHorizontal,
+  LayoutGrid
+} from 'lucide-react';
 
 interface OverlayPanelProps {
   transcriptUtterances: { speaker: SpeakerLabel; text: string; confidence: number }[];
@@ -12,125 +27,278 @@ interface OverlayPanelProps {
     category: 'answer' | 'objection' | 'next-step';
   }>;
   isRecording?: boolean;
+  onStop?: () => void;
+  onPause?: () => void;
 }
 
-export default function OverlayPanel({ transcriptUtterances, transcriptText, liveRecommendations = [], isRecording }: OverlayPanelProps) {
+export default function OverlayPanel({
+  transcriptUtterances,
+  transcriptText,
+  liveRecommendations = [],
+  isRecording = false,
+  onStop
+}: OverlayPanelProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'transcript'>('chat');
-  const [inputValue, setInputValue] = useState('');
+  const [inputText, setInputText] = useState('');
+  const [isSmartMode, setIsSmartMode] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Dragging State
+  const [position, setPosition] = useState({ x: window.innerWidth - 420, y: 100 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  // Auto-scroll to bottom of lists
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [transcriptUtterances, liveRecommendations, activeTab]);
+
+  // Drag Event Listeners
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        setPosition({
+          x: e.clientX - dragOffset.x,
+          y: e.clientY - dragOffset.y
+        });
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragOffset]);
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragOffset({
+      x: e.clientX - position.x,
+      y: e.clientY - position.y
+    });
+  };
 
   const handleCopyAll = async () => {
     try {
       await copyToClipboard(transcriptText);
-      alert('Transcript copied to clipboard');
-    } catch (err) {
-      alert('Failed to copy transcript');
+    } catch (_err) {
+      // Error handling
     }
   };
 
   return (
-    <div className="fixed top-4 right-4 w-96 bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden">
-      <div className="flex border-b border-gray-700">
+    <div
+      ref={containerRef}
+      style={{
+        left: `${position.x}px`,
+        top: `${position.y}px`,
+        cursor: isDragging ? 'grabbing' : 'default'
+      }}
+      className="fixed w-[360px] bg-black/40 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/5 overflow-hidden font-sans flex flex-col z-50 animate-in fade-in zoom-in-95 duration-200 ring-1 ring-white/10 select-none"
+    >
+
+      {/* Header / Controls */}
+      <div
+        className="bg-white/5 p-2 flex items-center justify-between border-b border-white/5 backdrop-blur-md cursor-grab active:cursor-grabbing"
+        onMouseDown={handleDragStart}
+      >
+
+        {/* Recording Controls */}
+        <div className="flex items-center bg-[#1A1D26]/80 rounded-full p-1 pl-2.5 pr-1 border border-white/5 shadow-lg backdrop-blur-md group hover:border-white/10 transition-colors">
+          <button
+            className="flex items-center gap-1.5 text-slate-300 text-[11px] hover:text-white transition-colors mr-1.5 font-medium"
+            onMouseDown={(e) => e.stopPropagation()} // Prevent drag start
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+            <span>Rec</span>
+            <ChevronDown size={10} className="opacity-50 ml-0.5" />
+          </button>
+
+          <div className="h-3 w-[1px] bg-white/10 mx-1"></div>
+
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors" title="Pause">
+            <Pause size={10} fill="currentColor" />
+          </button>
+
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onStop}
+            className="p-1 hover:bg-red-500/20 rounded-full text-slate-400 hover:text-red-400 transition-colors" title="Stop"
+          >
+            <Square size={10} fill="currentColor" />
+          </button>
+        </div>
+
+        {/* Drag Handle & Window Controls */}
+        <div className="flex items-center gap-1">
+          {/* 6 Dots Drag Handle */}
+          <div className="p-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-grab active:cursor-grabbing">
+            <LayoutGrid size={14} className="opacity-60" />
+          </div>
+
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            className="p-1.5 hover:bg-white/10 rounded-full text-slate-500 hover:text-white transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="px-1 pt-1 flex gap-1 bg-black/20">
         <button
           onClick={() => setActiveTab('chat')}
-          className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === 'chat'
-              ? 'bg-gray-700 text-white'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-t-lg transition-all ${activeTab === 'chat'
+              ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            }`}
         >
+          <MessageSquare size={12} className={activeTab === 'chat' ? 'text-indigo-400' : ''} />
           Chat
         </button>
         <button
           onClick={() => setActiveTab('transcript')}
-          className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === 'transcript'
-              ? 'bg-gray-700 text-white'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-t-lg transition-all ${activeTab === 'transcript'
+              ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            }`}
         >
+          <FileText size={12} />
           Transcript
         </button>
       </div>
 
-      <div className="h-96 overflow-y-auto">
+      {/* Content Area */}
+      <div className="flex-1 bg-[#0F1117]/80 min-h-[320px] max-h-[420px] flex flex-col relative backdrop-blur-md">
+
+        {/* CHAT TAB */}
         {activeTab === 'chat' && (
-          <div className="p-4 space-y-4">
-            {liveRecommendations.length > 0 ? (
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-gray-300 mb-2">Live Suggestions</h3>
-                {liveRecommendations.map((rec, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-lg border ${
-                      rec.priority === 'high'
-                        ? 'bg-red-900/20 border-red-700'
-                        : rec.priority === 'medium'
-                        ? 'bg-yellow-900/20 border-yellow-700'
-                        : 'bg-blue-900/20 border-blue-700'
-                    }`}
+          <>
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent" ref={scrollRef}>
+              {/* Quick Actions */}
+              <div className="flex overflow-x-auto pb-1 gap-1.5 no-scrollbar mask-linear-fade">
+                {['Suggest', 'Follow-up', 'Fact check', 'Recap'].map((action, i) => (
+                  <button
+                    key={action}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-indigo-500/30 rounded-full text-[10px] text-slate-300 hover:text-white transition-all whitespace-nowrap shadow-sm group"
                   >
-                    <div className="flex items-start justify-between mb-1">
-                      <h4 className="text-sm font-medium text-white">{rec.title}</h4>
-                      <span className="ml-2 px-2 py-0.5 bg-gray-700 text-xs rounded text-gray-300">
-                        {rec.category}
+                    {action === 'Suggest' && <Wand2 size={8} className="text-indigo-400" />}
+                    {action === 'Follow-up' && <MessageSquare size={8} className="text-purple-400" />}
+                    {action}
+                  </button>
+                ))}
+              </div>
+
+              {/* Live AI Recommendations */}
+              {liveRecommendations.length > 0 ? (
+                <div className="space-y-2">
+                  {liveRecommendations.map((rec, i) => (
+                    <div key={i} className="bg-white/5 p-3 rounded-xl border border-white/5 shadow-lg animate-in fade-in slide-in-from-bottom-2 hover:bg-white/10 transition-colors group">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Sparkles size={10} className="text-indigo-400" />
+                        <span className="text-[10px] font-semibold text-indigo-300 uppercase tracking-wider">{rec.category}</span>
+                      </div>
+                      <h4 className="text-xs font-medium text-slate-100 mb-1 leading-snug">{rec.title}</h4>
+                      <p className="text-[10px] text-slate-400 leading-relaxed font-light line-clamp-3">{rec.message}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="h-32 flex flex-col items-center justify-center text-slate-600 opacity-60">
+                  <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center mb-2 border border-white/5">
+                    <Cpu size={14} className="text-slate-500" />
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-500">AI Active</span>
+                </div>
+              )}
+            </div>
+
+            {/* Input Area */}
+            <div className="p-2.5 bg-black/20 border-t border-white/5">
+              <div className="relative group">
+                <input
+                  type="text"
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder="Ask Selly..."
+                  className="w-full bg-white/5 text-slate-200 text-xs rounded-lg pl-3 pr-8 py-2.5 border border-white/5 focus:outline-none focus:border-indigo-500/50 focus:bg-white/10 transition-all placeholder-slate-600/70"
+                />
+                <button
+                  disabled={!inputText}
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all ${inputText
+                      ? 'bg-indigo-500 text-white shadow-lg'
+                      : 'text-slate-600'
+                    }`}
+                >
+                  <Send size={10} className={inputText ? 'ml-px' : ''} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between mt-2 px-0.5">
+                <button
+                  onClick={() => setIsSmartMode(!isSmartMode)}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${isSmartMode
+                      ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                      : 'text-slate-600 hover:text-slate-400'
+                    }`}
+                >
+                  <Sparkles size={8} className={isSmartMode ? 'fill-indigo-300' : ''} />
+                  Smart Mode
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* TRANSCRIPT TAB */}
+        {activeTab === 'transcript' && (
+          <>
+            <div className="bg-black/10 border-b border-white/5 px-3 py-1.5 flex items-center justify-between z-10">
+              <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                <span className="w-1 h-1 rounded-full bg-green-500"></span>
+                <span>Live Transcript</span>
+              </div>
+              <button onClick={handleCopyAll} className="flex items-center gap-1 text-[9px] font-medium text-slate-500 hover:text-slate-300 transition-colors px-2 py-0.5 rounded hover:bg-white/5">
+                <Copy size={8} /> Copy
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans text-xs leading-relaxed scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent" ref={scrollRef}>
+              {transcriptUtterances.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-600 text-[10px] text-center px-8">
+                  <p>Real-time transcriptions will appear here.</p>
+                </div>
+              ) : (
+                transcriptUtterances.map((utt, i) => (
+                  <div key={i} className="group animate-in fade-in slide-in-from-bottom-1 duration-300">
+                    <div className="flex items-baseline gap-1.5 mb-0.5">
+                      <span className={`text-[9px] uppercase tracking-wider font-bold ${utt.speaker === 'Rep' ? 'text-indigo-400' : 'text-emerald-400'
+                        }`}>
+                        {utt.speaker}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-300">{rec.message}</p>
+                    <p className="text-slate-300 group-hover:text-slate-100 transition-colors">{utt.text}</p>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <p className="text-gray-400 text-sm">
-                  {isRecording ? 'Listening for context...' : 'No suggestions yet'}
-                </p>
-              </div>
-            )}
-          </div>
+                ))
+              )}
+            </div>
+          </>
         )}
 
-        {activeTab === 'transcript' && (
-          <div className="p-4 space-y-3">
-            {!isRecording && transcriptUtterances.length > 0 && (
-              <button
-                onClick={handleCopyAll}
-                className="w-full px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors"
-              >
-                Copy All
-              </button>
-            )}
-
-            {isRecording ? (
-              <p className="text-gray-400 text-sm text-center py-8">
-                Transcript will appear after recording stops
-              </p>
-            ) : transcriptUtterances.length === 0 ? (
-              <p className="text-gray-400 text-sm text-center py-8">
-                No transcript available
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {transcriptUtterances.map((utterance, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-lg ${
-                      utterance.speaker === 'Rep'
-                        ? 'bg-blue-900/30 ml-4'
-                        : utterance.speaker === 'Prospect'
-                        ? 'bg-green-900/30 mr-4'
-                        : 'bg-gray-700 mx-2'
-                    }`}
-                  >
-                    <div className="text-xs font-semibold mb-1 text-gray-300">
-                      {utterance.speaker}
-                    </div>
-                    <div className="text-sm text-gray-100">{utterance.text}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
