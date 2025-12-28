@@ -7,6 +7,9 @@
 //!
 //! Runs until SIGINT (Ctrl+C), then closes the WAV file cleanly.
 
+#[cfg(windows)]
+mod wasapi_loopback;
+
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -14,7 +17,7 @@ use cpal::{Sample, SampleFormat, SampleRate, StreamConfig};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use hound::{SampleFormat as HoundSampleFormat, WavSpec, WavWriter};
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -97,21 +100,12 @@ fn main() -> Result<()> {
         input_device.name().unwrap_or_else(|_| "Unknown".to_string())
     );
 
-    // Get default output device for loopback
-    let output_device = host
-        .default_output_device()
-        .ok_or_else(|| anyhow!("No default output device found"))?;
-    println!(
-        "[win-audio-capture] LOOPBACK device: {}",
-        output_device.name().unwrap_or_else(|_| "Unknown".to_string())
-    );
-
     // Get the device's default/supported config instead of forcing 48kHz
     // This prevents "configuration not supported" errors on different hardware
     let input_supported_config = input_device
         .default_input_config()
         .context("Failed to get default input config from MIC device")?;
-    
+
     println!(
         "[win-audio-capture] MIC native config: {:?} @ {} Hz, {} channel(s)",
         input_supported_config.sample_format(),
@@ -122,12 +116,6 @@ fn main() -> Result<()> {
     let input_config = StreamConfig {
         channels: input_supported_config.channels(), // Use native channel count
         sample_rate: input_supported_config.sample_rate(),
-        buffer_size: cpal::BufferSize::Default,
-    };
-
-    let output_config = StreamConfig {
-        channels: 1, // Mono loopback (we'll take first channel)
-        sample_rate: input_supported_config.sample_rate(), // Match MIC for simplicity
         buffer_size: cpal::BufferSize::Default,
     };
 
@@ -152,39 +140,26 @@ fn main() -> Result<()> {
         )
         .context("Failed to build MIC input stream")?;
 
-    // Build loopback stream
-    // Note: On Windows, we need to use the output device's supported input config for loopback
-    // cpal doesn't directly support WASAPI loopback, so we capture from a virtual audio device
-    // or use the input stream on the output device if supported
-    let loopback_tx_clone = loopback_tx.clone();
-
-    // Try to get loopback from output device as input
-    // This works on some Windows configurations with virtual audio cables or if the output
-    // device supports input (rare). For true WASAPI loopback, we would need windows-rs directly.
-    // For now, we'll try to build an input stream on the output device.
-    let loopback_stream = match output_device.build_input_stream(
-        &output_config,
-        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            for &sample in data {
-                let _ = loopback_tx_clone.try_send(sample);
+    // Start WASAPI loopback capture in background thread
+    #[cfg(windows)]
+    let loopback_handle = {
+        use wasapi_loopback::WasapiLoopbackCapture;
+        let loopback_capture = WasapiLoopbackCapture::new(loopback_tx.clone(), running.clone());
+        match loopback_capture.start() {
+            Ok(handle) => {
+                println!("[win-audio-capture] WASAPI loopback capture started");
+                Some(handle)
             }
-        },
-        |err| eprintln!("[win-audio-capture] LOOPBACK stream error: {}", err),
-        None,
-    ) {
-        Ok(stream) => {
-            println!("[win-audio-capture] Using device loopback mode");
-            Some(stream)
-        }
-        Err(e) => {
-            eprintln!(
-                "[win-audio-capture] Warning: Could not create loopback stream: {}",
-                e
-            );
-            eprintln!("[win-audio-capture] Recording MIC only, loopback channel will be silent");
-            None
+            Err(e) => {
+                eprintln!("[win-audio-capture] Warning: Could not start WASAPI loopback: {}", e);
+                eprintln!("[win-audio-capture] Recording MIC only, loopback channel will be silent");
+                None
+            }
         }
     };
+
+    #[cfg(not(windows))]
+    let loopback_handle: Option<std::thread::JoinHandle<Result<()>>> = None;
 
     // Set up WAV writer using device's actual sample rate
     let spec = WavSpec {
@@ -203,11 +178,17 @@ fn main() -> Result<()> {
     let buf_writer = BufWriter::new(file);
     let mut wav_writer = WavWriter::new(buf_writer, spec).context("Failed to create WAV writer")?;
 
-    // Start streams
+    // Set up stdout PCM frame writer for streaming
+    let stdout = std::io::stdout();
+    let mut stdout_lock = stdout.lock();
+    let mut frame_buffer: Vec<i16> = Vec::with_capacity(9600); // 100ms buffer @ 48kHz stereo
+    let mut sequence_number: u32 = 0;
+    const SAMPLES_PER_FRAME: usize = 4800; // 100ms @ 48kHz = 4800 stereo pairs
+
+    eprintln!("[win-audio-capture] Dual-mode output enabled: WAV file + stdout PCM frames");
+
+    // Start MIC stream (loopback is already running in background thread)
     input_stream.play().context("Failed to start MIC stream")?;
-    if let Some(ref stream) = loopback_stream {
-        stream.play().context("Failed to start loopback stream")?;
-    }
 
     println!("[win-audio-capture] Recording started...");
 
@@ -233,15 +214,47 @@ fn main() -> Result<()> {
 
         samples_written += 2;
 
+        // Accumulate stereo pair in frame buffer for stdout streaming
+        frame_buffer.push(mic_i16);
+        frame_buffer.push(loopback_i16);
+
+        // Flush frame to stdout when buffer reaches target size
+        if frame_buffer.len() >= SAMPLES_PER_FRAME * 2 {
+            match write_pcm_frame(&mut stdout_lock, &frame_buffer, sequence_number) {
+                Ok(_) => {
+                    sequence_number = sequence_number.wrapping_add(1);
+                    frame_buffer.clear();
+                }
+                Err(e) => {
+                    eprintln!("[win-audio-capture] Warning: Failed to write PCM frame: {}", e);
+                    eprintln!("[win-audio-capture] Continuing with WAV-only mode");
+                    frame_buffer.clear(); // Prevent buffer overflow
+                }
+            }
+        }
+
         // Small sleep to prevent busy-waiting when no samples available
         if mic_rx.is_empty() && loopback_rx.is_empty() {
             thread::sleep(Duration::from_micros(100));
         }
     }
 
-    // Finalize WAV file
+    // Flush any remaining samples in frame buffer on shutdown
+    if !frame_buffer.is_empty() {
+        if let Err(e) = write_pcm_frame(&mut stdout_lock, &frame_buffer, sequence_number) {
+            eprintln!("[win-audio-capture] Warning: Failed to flush final PCM frame: {}", e);
+        }
+    }
+
+    // Clean up streams
     drop(input_stream);
-    drop(loopback_stream);
+
+    // Wait for loopback thread to finish
+    if let Some(handle) = loopback_handle {
+        if let Err(e) = handle.join() {
+            eprintln!("[win-audio-capture] Warning: Loopback thread panicked: {:?}", e);
+        }
+    }
 
     wav_writer.finalize().context("Failed to finalize WAV file")?;
 
@@ -250,6 +263,32 @@ fn main() -> Result<()> {
         "[win-audio-capture] Recording stopped. Samples: {}, Bytes: {}",
         samples_written, bytes_written
     );
+
+    Ok(())
+}
+
+/// Write a PCM frame to stdout with framing header
+/// Frame format: [MAGIC(4)] [SeqNum(4)] [Size(4)] [PCM data...]
+/// Magic bytes: "SELL" (0x53454C4C)
+fn write_pcm_frame<W: Write>(
+    writer: &mut W,
+    samples: &[i16],
+    sequence_number: u32,
+) -> Result<()> {
+    let frame_size = (samples.len() * 2) as u32; // samples * 2 bytes per i16
+
+    // Write frame header
+    writer.write_all(b"SELL")?; // Magic bytes for frame synchronization
+    writer.write_all(&sequence_number.to_le_bytes())?; // Sequence number (u32 LE)
+    writer.write_all(&frame_size.to_le_bytes())?; // Frame size in bytes (u32 LE)
+
+    // Write PCM samples as little-endian i16
+    for &sample in samples {
+        writer.write_all(&sample.to_le_bytes())?;
+    }
+
+    // Flush to ensure data reaches Node.js immediately
+    writer.flush()?;
 
     Ok(())
 }

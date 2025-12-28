@@ -15,6 +15,7 @@ import {
     isSidecarAvailable,
     stopAllCaptures,
 } from './audio/capture.js';
+import { sseManager } from './sse/index.js';
 
 const PORT = parseInt(process.env.AGENT_PORT ?? '3001', 10);
 
@@ -81,6 +82,12 @@ async function handleCaptureStop(req: IncomingMessage, res: ServerResponse): Pro
         }
 
         const result = await stopCapture(body.sessionId);
+
+        // Close all SSE connections for this session
+        if (result.ok) {
+            sseManager.closeSessionConnections(body.sessionId);
+        }
+
         sendJson(res, result.ok ? 200 : 400, result);
     } catch (error) {
         sendJson(res, 500, {
@@ -117,6 +124,72 @@ function handleHealth(_req: IncomingMessage, res: ServerResponse): void {
 }
 
 /**
+ * Handle GET /capture/:sessionId/transcript-stream
+ * Stream transcripts as Server-Sent Events
+ */
+async function handleTranscriptStream(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse
+): Promise<void> {
+    // Validate sessionId
+    if (!sessionId || typeof sessionId !== 'string') {
+        sendJson(res, 400, { ok: false, error: 'Invalid sessionId' });
+        return;
+    }
+
+    // Check if capture session exists
+    const activeSessions = getActiveSessions();
+    if (!activeSessions.includes(sessionId)) {
+        sendJson(res, 404, {
+            ok: false,
+            error: `No active capture session for sessionId: ${sessionId}`,
+        });
+        return;
+    }
+
+    // Set SSE headers
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+    });
+
+    // Send initial connection event
+    const connectEvent = {
+        type: 'connection-established',
+        sessionId,
+        timestamp: Date.now(),
+    };
+    res.write(`data: ${JSON.stringify(connectEvent)}\n\n`);
+
+    // Register client and get unsubscribe function
+    const unsubscribe = sseManager.registerClient(sessionId, res);
+
+    console.log(
+        `[sse] Client connected for session ${sessionId}. ` +
+        `Total clients: ${sseManager.getClientCount(sessionId)}`
+    );
+
+    // Handle client disconnect
+    req.on('close', () => {
+        unsubscribe();
+        console.log(
+            `[sse] Client disconnected for session ${sessionId}. ` +
+            `Remaining clients: ${sseManager.getClientCount(sessionId)}`
+        );
+    });
+
+    req.on('error', (err) => {
+        console.error(`[sse] Request error for ${sessionId}:`, err.message);
+        unsubscribe();
+    });
+}
+
+/**
  * Main request handler
  */
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -146,7 +219,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     } else if (url === '/health' && method === 'GET') {
         handleHealth(req, res);
     } else {
-        sendJson(res, 404, { ok: false, error: 'Not found' });
+        // Check for SSE transcript stream endpoint
+        const transcriptStreamMatch = url.match(/^\/capture\/([^/]+)\/transcript-stream$/);
+        if (transcriptStreamMatch && method === 'GET') {
+            const sessionId = transcriptStreamMatch[1];
+            await handleTranscriptStream(sessionId, req, res);
+        } else {
+            sendJson(res, 404, { ok: false, error: 'Not found' });
+        }
     }
 }
 

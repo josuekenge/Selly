@@ -5,7 +5,7 @@
 // NO transcription, NO AI, NO secrets in logs
 
 import { spawn, ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +36,7 @@ export interface CaptureStopResult {
     sessionId: string;
     outputPath: string;
     bytesWritten?: number;
+    fileBase64?: string;  // Base64-encoded file content for direct upload
     error?: string;
 }
 
@@ -208,14 +209,18 @@ export async function stopCapture(sessionId: string): Promise<CaptureStopResult>
     // Clean up
     activeCaptures.delete(sessionId);
 
-    // Get file size if exists
+    // Get file size and content if exists
     let bytesWritten: number | undefined;
+    let fileBase64: string | undefined;
     if (existsSync(outputPath)) {
         try {
             const stats = statSync(outputPath);
             bytesWritten = stats.size;
+            // Read and encode file for direct transfer to desktop
+            const fileBuffer = readFileSync(outputPath);
+            fileBase64 = fileBuffer.toString('base64');
         } catch {
-            // Ignore stat errors
+            // Ignore read errors
         }
     }
 
@@ -224,6 +229,7 @@ export async function stopCapture(sessionId: string): Promise<CaptureStopResult>
         sessionId,
         outputPath,
         bytesWritten,
+        fileBase64,
     };
 }
 

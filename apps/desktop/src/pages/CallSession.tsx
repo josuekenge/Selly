@@ -7,9 +7,10 @@ import {
   uploadToSignedUrl,
   stopCall,
   processCall,
-  getInsights
+  getInsights,
+  subscribeToTranscriptStream,
+  type TranscriptEvent
 } from '../lib/api';
-import { readFileBytes } from '../lib/tauriFs';
 import { buildViewModel, type CallInsightsViewModel } from '../lib/viewModel';
 import { copyToClipboard } from '../lib/clipboard';
 import RecorderPill from '../components/RecorderPill';
@@ -17,11 +18,21 @@ import OverlayPanel from '../components/OverlayPanel';
 
 type State = 'idle' | 'starting' | 'recording' | 'stopping' | 'uploading' | 'processing' | 'ready' | 'error';
 
+type SpeakerLabel = 'Rep' | 'Prospect' | 'Unknown';
+
+interface TranscriptUtterance {
+  speaker: SpeakerLabel;
+  text: string;
+  confidence: number;
+}
+
 export default function CallSession() {
   const [state, setState] = useState<State>('idle');
   const [sessionId, setSessionId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [viewModel, setViewModel] = useState<CallInsightsViewModel | null>(null);
+  const [transcriptUtterances, setTranscriptUtterances] = useState<TranscriptUtterance[]>([]);
+  const [unsubscribeSSE, setUnsubscribeSSE] = useState<(() => void) | null>(null);
 
   const handleStart = async () => {
     setState('starting');
@@ -30,6 +41,32 @@ export default function CallSession() {
       setSessionId(newSessionId);
       await agentStartCapture(newSessionId);
       setState('recording');
+
+      // Start SSE connection for live transcripts
+      const cleanup = subscribeToTranscriptStream(
+        newSessionId,
+        (event: TranscriptEvent) => {
+          if (event.type === 'partial' || event.type === 'final') {
+            // Map speaker to SpeakerLabel format
+            const speakerLabel: SpeakerLabel =
+              event.speaker === 'rep' ? 'Rep' :
+              event.speaker === 'prospect' ? 'Prospect' :
+              'Unknown';
+
+            // Add new utterance to state
+            setTranscriptUtterances(prev => [...prev, {
+              speaker: speakerLabel,
+              text: event.text || '',
+              confidence: event.confidence || 0,
+            }]);
+          }
+        },
+        (error) => {
+          console.error('SSE error:', error);
+          // Don't fail the entire session on SSE error, just log it
+        }
+      );
+      setUnsubscribeSSE(() => cleanup);
     } catch (err) {
       setErrorMessage(String(err));
       setState('error');
@@ -38,11 +75,30 @@ export default function CallSession() {
 
   const handleStop = async () => {
     setState('stopping');
+
+    // Close SSE connection before stopping
+    if (unsubscribeSSE) {
+      unsubscribeSSE();
+      setUnsubscribeSSE(null);
+    }
+
     try {
-      const { outputPath } = await agentStopCapture(sessionId);
+      const { fileBase64 } = await agentStopCapture(sessionId);
 
       setState('uploading');
-      const fileBytes = await readFileBytes(outputPath);
+
+      // Use base64 data from agent (avoids local file read issues)
+      if (!fileBase64) {
+        throw new Error('No audio data received from agent');
+      }
+
+      // Decode base64 to Uint8Array
+      const binaryString = atob(fileBase64);
+      const fileBytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        fileBytes[i] = binaryString.charCodeAt(i);
+      }
+
       const signed = await signUpload({
         sessionId,
         contentType: 'audio/wav',
@@ -87,10 +143,17 @@ export default function CallSession() {
   };
 
   const handleReset = () => {
+    // Close SSE if still open
+    if (unsubscribeSSE) {
+      unsubscribeSSE();
+      setUnsubscribeSSE(null);
+    }
+
     setState('idle');
     setSessionId('');
     setErrorMessage('');
     setViewModel(null);
+    setTranscriptUtterances([]);
   };
 
   const handleShare = async () => {
@@ -191,18 +254,26 @@ export default function CallSession() {
   }
 
   if (state === 'recording') {
+    const transcriptText = transcriptUtterances
+      .map(u => `[${u.speaker}] ${u.text}`)
+      .join('\n');
+
     return (
       <div className="min-h-screen bg-gray-900 text-white p-8">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-3xl font-bold mb-2">Active session</h1>
           <p className="text-gray-400 mb-8">{currentDate}</p>
-          <p className="text-gray-300 text-lg">Finish meeting to see notes…</p>
+          {transcriptUtterances.length > 0 ? (
+            <p className="text-gray-300 text-lg">Live transcript active ({transcriptUtterances.length} utterances)</p>
+          ) : (
+            <p className="text-gray-300 text-lg">Listening for speech...</p>
+          )}
         </div>
 
         <RecorderPill onStop={handleStop} />
         <OverlayPanel
-          transcriptUtterances={[]}
-          transcriptText=""
+          transcriptUtterances={transcriptUtterances}
+          transcriptText={transcriptText}
           isRecording={true}
         />
       </div>

@@ -93,6 +93,7 @@ router.post('/uploads/sign', async (req: Request, res: Response) => {
             ok: true,
             sessionId: body.sessionId,
             path: result.path,
+            objectPath: result.path,  // Desktop expects this field
             signedUrl: result.signedUrl,
             token: result.token,
         });
