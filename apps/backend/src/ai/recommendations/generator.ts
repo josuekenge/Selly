@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 import { RECOMMENDATIONS_VERSION } from './types.js';
 import { buildRecommendationsPrompt } from './prompt.js';
+import type { RetrievalResult } from '../../modules/retrieval/index.js';
 
 // ============================================
 // LLM CLIENT INTERFACE
@@ -251,10 +252,11 @@ export async function generateRecommendations(
         ctx: SerializedConversationContext;
         signals3a: SignalSet;
         signals3b: AISignalSet;
+        knowledgeChunks?: RetrievalResult[];
     },
     opts?: { model?: string }
 ): Promise<RecommendationSet> {
-    const { ctx, signals3a, signals3b } = args;
+    const { ctx, signals3a, signals3b, knowledgeChunks } = args;
     const model = opts?.model ?? DEFAULT_RECOMMENDER_MODEL;
     const sessionId = ctx.call.sessionId;
     const lastEventAt = ctx.call.lastEventAt;
@@ -265,6 +267,7 @@ export async function generateRecommendations(
             ctx,
             signals3a,
             signals3b,
+            knowledgeChunks,
         });
 
         // Call LLM

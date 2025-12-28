@@ -11,6 +11,7 @@ import { generateRecommendations, type LlmJsonClient } from '../ai/recommendatio
 import { extractSignals } from '../signals/extractor.js';
 import { classifyAISignals } from '../ai/signals/classifier.js';
 import type { TranscriptRecord } from '../api/store.js';
+import { retrievalService } from '../modules/retrieval/index.js';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -20,6 +21,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 export interface LiveRecommendationRequest {
     sessionId: string;
+    workspaceId: string;
     question: string;
     recentTranscript: TranscriptRecord[];
     timestamp: number;
@@ -328,13 +330,21 @@ async function generateLiveRecommendationsInternal(
         const llmClient = createLLMClient(REQUEST_TIMEOUT_MS);
         const signals3b = await classifyAISignals(llmClient, context);
 
-        // Step 5: Generate recommendations
+        // Step 4.5: Retrieve relevant knowledge chunks
+        const knowledgeChunks = await retrievalService.retrieveContext(
+            request.workspaceId,
+            question,
+            { limit: 3, minSimilarity: 0.3 }
+        );
+
+        // Step 5: Generate recommendations (with knowledge context)
         const recommendations = await generateRecommendations(
             llmClient,
             {
                 ctx: context,
                 signals3a,
                 signals3b,
+                knowledgeChunks,
             },
             { model: FAST_MODEL }
         );

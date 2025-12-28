@@ -20,6 +20,8 @@ import { createJob } from '../jobs/index.js';
 import { isDeepgramConfigured } from '../services/deepgram.js';
 import { processCall, isOpenAIConfigured } from '../services/pipeline.js';
 import { recommendationSSEManager } from './recommendationSSE.js';
+import { generateLiveRecommendations, isLiveRecommendationsConfigured } from '../services/liveRecommendations.js';
+import { knowledgeService } from '../modules/knowledge/index.js';
 
 const router = Router();
 
@@ -252,6 +254,92 @@ router.get('/calls/:sessionId/insights', (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/calls/:sessionId/trigger-recommendations
+ * Triggered by agent when question is detected
+ * Generates recommendations and broadcasts via SSE
+ */
+router.post('/calls/:sessionId/trigger-recommendations', async (req: Request, res: Response) => {
+    try {
+        const { sessionId } = req.params;
+        const body = req.body as {
+            question?: string;
+            recentTranscript?: Array<{
+                speaker: string;
+                text: string;
+                confidence: number;
+                startedAt: number;
+                endedAt: number;
+            }>;
+            timestamp?: number;
+        };
+
+        if (!sessionId) {
+            res.status(400).json({ ok: false, error: 'Missing sessionId' });
+            return;
+        }
+
+        if (!body.question) {
+            res.status(400).json({ ok: false, error: 'Missing question' });
+            return;
+        }
+
+        if (!isLiveRecommendationsConfigured()) {
+            res.status(503).json({ ok: false, error: 'Live recommendations not configured (missing OpenAI key)' });
+            return;
+        }
+
+        // Get workspaceId from call record
+        const call = getCall(sessionId);
+        const DEFAULT_WORKSPACE_ID = '00000000-0000-0000-0000-000000000001';
+        const workspaceId = call?.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
+        console.log(`[api] Generating live recommendations for session ${sessionId} (workspace: ${workspaceId})`);
+
+        // Generate recommendations with knowledge retrieval
+        const result = await generateLiveRecommendations({
+            sessionId,
+            workspaceId,
+            question: body.question,
+            recentTranscript: body.recentTranscript || [],
+            timestamp: body.timestamp || Date.now(),
+        });
+
+        // Broadcast to connected SSE clients if successful
+        if (result.ok && result.recommendations.recommendations.length > 0) {
+            // Convert to SSE event format
+            for (const rec of result.recommendations.recommendations) {
+                recommendationSSEManager.broadcastRecommendation(sessionId, {
+                    type: 'recommendation.generated',
+                    sessionId,
+                    timestamp: result.generatedAt,
+                    recommendation: {
+                        title: rec.title,
+                        message: rec.script || rec.title,
+                        priority: rec.priority === 'high' ? 'high' : rec.priority === 'medium' ? 'medium' : 'low',
+                        category: rec.category === 'answer' ? 'answer' : rec.category === 'objection' ? 'objection' : 'next-step',
+                    },
+                });
+            }
+        }
+
+        // Return result to agent
+        res.json({
+            ok: result.ok,
+            cached: result.cached,
+            latencyMs: result.latencyMs,
+            recommendationCount: result.recommendations.recommendations.length,
+            error: result.error,
+        });
+    } catch (error) {
+        console.error('[api] Error in /calls/:sessionId/trigger-recommendations:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+/**
  * GET /api/calls/:sessionId/recommendations-stream
  * SSE endpoint for live recommendations during active calls
  */
@@ -278,6 +366,176 @@ router.get('/calls/:sessionId/recommendations-stream', (req: Request, res: Respo
     });
 
     console.log(`[api] SSE recommendations stream established for session ${sessionId}`);
+});
+
+/**
+ * POST /api/workspaces/:workspaceId/knowledge
+ * Ingest a new knowledge document
+ */
+router.post('/workspaces/:workspaceId/knowledge', async (req: Request, res: Response) => {
+    try {
+        const { workspaceId } = req.params;
+        const body = req.body as {
+            title?: string;
+            content?: string;
+            description?: string;
+            sourceType?: 'manual' | 'upload' | 'api';
+            metadata?: Record<string, any>;
+        };
+
+        if (!workspaceId) {
+            res.status(400).json({ ok: false, error: 'Missing workspaceId' });
+            return;
+        }
+
+        if (!body.title || !body.content) {
+            res.status(400).json({ ok: false, error: 'Missing title or content' });
+            return;
+        }
+
+        const document = await knowledgeService.ingestDocument({
+            workspaceId,
+            title: body.title,
+            content: body.content,
+            description: body.description,
+            sourceType: body.sourceType,
+            metadata: body.metadata,
+        });
+
+        res.json({
+            ok: true,
+            document: {
+                id: document.id,
+                title: document.title,
+                description: document.description,
+                sourceType: document.sourceType,
+                status: document.status,
+                chunkCount: document.chunks?.length || 0,
+                createdAt: document.createdAt,
+            },
+        });
+    } catch (error) {
+        console.error('[api] Error in POST /workspaces/:workspaceId/knowledge:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/knowledge
+ * List all knowledge documents for a workspace
+ */
+router.get('/workspaces/:workspaceId/knowledge', async (req: Request, res: Response) => {
+    try {
+        const { workspaceId } = req.params;
+
+        if (!workspaceId) {
+            res.status(400).json({ ok: false, error: 'Missing workspaceId' });
+            return;
+        }
+
+        const documents = await knowledgeService.listDocuments(workspaceId);
+
+        res.json({
+            ok: true,
+            documents: documents.map(doc => ({
+                id: doc.id,
+                title: doc.title,
+                description: doc.description,
+                sourceType: doc.sourceType,
+                status: doc.status,
+                chunkCount: doc.chunks?.length || 0,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt,
+            })),
+            count: documents.length,
+        });
+    } catch (error) {
+        console.error('[api] Error in GET /workspaces/:workspaceId/knowledge:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/knowledge/:docId
+ * Get a specific knowledge document
+ */
+router.get('/workspaces/:workspaceId/knowledge/:docId', async (req: Request, res: Response) => {
+    try {
+        const { workspaceId, docId } = req.params;
+
+        if (!workspaceId || !docId) {
+            res.status(400).json({ ok: false, error: 'Missing workspaceId or docId' });
+            return;
+        }
+
+        const document = await knowledgeService.getDocument(workspaceId, docId);
+
+        if (!document) {
+            res.status(404).json({ ok: false, error: 'Document not found' });
+            return;
+        }
+
+        res.json({
+            ok: true,
+            document: {
+                id: document.id,
+                title: document.title,
+                description: document.description,
+                sourceType: document.sourceType,
+                status: document.status,
+                content: document.content,
+                chunks: document.chunks?.map(chunk => ({
+                    id: chunk.id,
+                    chunkIndex: chunk.chunkIndex,
+                    content: chunk.content,
+                    metadata: chunk.metadata,
+                })),
+                metadata: document.metadata,
+                createdAt: document.createdAt,
+                updatedAt: document.updatedAt,
+            },
+        });
+    } catch (error) {
+        console.error('[api] Error in GET /workspaces/:workspaceId/knowledge/:docId:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+/**
+ * DELETE /api/workspaces/:workspaceId/knowledge/:docId
+ * Delete a knowledge document
+ */
+router.delete('/workspaces/:workspaceId/knowledge/:docId', async (req: Request, res: Response) => {
+    try {
+        const { workspaceId, docId } = req.params;
+
+        if (!workspaceId || !docId) {
+            res.status(400).json({ ok: false, error: 'Missing workspaceId or docId' });
+            return;
+        }
+
+        await knowledgeService.deleteDocument(workspaceId, docId);
+
+        res.json({
+            ok: true,
+            message: 'Document deleted successfully',
+        });
+    } catch (error) {
+        console.error('[api] Error in DELETE /workspaces/:workspaceId/knowledge/:docId:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
 });
 
 /**

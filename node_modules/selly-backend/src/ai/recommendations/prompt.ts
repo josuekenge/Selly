@@ -5,6 +5,7 @@
 import type { SerializedConversationContext } from '../../domain/conversation/serializer.js';
 import type { SignalSet } from '../../signals/types.js';
 import type { AISignalSet } from '../signals/types.js';
+import type { RetrievalResult } from '../../modules/retrieval/index.js';
 
 /**
  * Builds the system and user prompts for generating recommendations.
@@ -13,8 +14,9 @@ export function buildRecommendationsPrompt(args: {
     ctx: SerializedConversationContext;
     signals3a: SignalSet;
     signals3b: AISignalSet;
+    knowledgeChunks?: RetrievalResult[];
 }): { system: string; user: string } {
-    const { ctx, signals3a, signals3b } = args;
+    const { ctx, signals3a, signals3b, knowledgeChunks } = args;
 
     const system = `You are a sales coach AI. Output ONLY valid JSON matching the schema below. No markdown, no explanations, no content outside JSON.
 
@@ -93,6 +95,24 @@ RULES:
         2
     );
 
+    // Build knowledge context section if chunks are provided
+    let knowledgeSection = '';
+    if (knowledgeChunks && knowledgeChunks.length > 0) {
+        const knowledgeJson = JSON.stringify(
+            knowledgeChunks.map((chunk, i) => ({
+                index: i,
+                content: chunk.content,
+                similarity: chunk.similarity,
+            })),
+            null,
+            2
+        );
+        knowledgeSection = `\n\nKNOWLEDGE BASE (relevant context from workspace knowledge):
+${knowledgeJson}
+
+Use this knowledge to inform your recommendations. Reference specific facts from the knowledge base when relevant.`;
+    }
+
     const user = `TRANSCRIPT (utterances with indices):
 ${utterancesJson}
 
@@ -103,9 +123,9 @@ AI SIGNALS (Step 3B):
 ${aiSignalsJson}
 
 METRICS:
-${metricsJson}
+${metricsJson}${knowledgeSection}
 
-Generate up to 5 actionable recommendations for the sales rep based on the above context. Each recommendation must be grounded in the transcript with exact quotes from the specified utterance indices. Output ONLY the JSON object with "recommendations" array.`;
+Generate up to 5 actionable recommendations for the sales rep based on the above context. Each recommendation must be grounded in the transcript with exact quotes from the specified utterance indices. If knowledge base content is provided, use it to inform your recommendations with accurate product/company information. Output ONLY the JSON object with "recommendations" array.`;
 
     return { system, user };
 }
