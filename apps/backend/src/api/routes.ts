@@ -19,6 +19,7 @@ import {
 import { createJob } from '../jobs/index.js';
 import { isDeepgramConfigured } from '../services/deepgram.js';
 import { processCall, isOpenAIConfigured } from '../services/pipeline.js';
+import { recommendationSSEManager } from './recommendationSSE.js';
 
 const router = Router();
 
@@ -248,6 +249,35 @@ router.get('/calls/:sessionId/insights', (req: Request, res: Response) => {
             error: error instanceof Error ? error.message : 'Unknown error',
         });
     }
+});
+
+/**
+ * GET /api/calls/:sessionId/recommendations-stream
+ * SSE endpoint for live recommendations during active calls
+ */
+router.get('/calls/:sessionId/recommendations-stream', (req: Request, res: Response) => {
+    const { sessionId } = req.params;
+
+    if (!sessionId) {
+        res.status(400).json({ ok: false, error: 'Missing sessionId' });
+        return;
+    }
+
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering in nginx
+
+    // Register client and get unsubscribe function
+    const unsubscribe = recommendationSSEManager.registerClient(sessionId, res);
+
+    // Handle client disconnect
+    req.on('close', () => {
+        unsubscribe();
+    });
+
+    console.log(`[api] SSE recommendations stream established for session ${sessionId}`);
 });
 
 /**

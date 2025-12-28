@@ -7,14 +7,58 @@ import { EventEmitter } from 'node:events';
 import { DeepgramStream } from '../transcription/deepgramStream.js';
 import type { TranscriptStreamEvent } from '../transcription/deepgramTypes.js';
 import type { StreamingSession } from '../transcription/TranscriptionTypes.js';
+import { QuestionDetector } from '../intent/QuestionDetector.js';
 
 const SIDECAR_PATH = join(__dirname, '..', '..', 'native', 'win-audio-capture', 'target', 'release', 'win-audio-capture.exe');
 const RECORDINGS_DIR = join(__dirname, '..', '..', 'recordings');
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
+const MAX_TRANSCRIPT_BUFFER = 20; // Keep last 20 utterances for context
 
 interface PCMFrame {
     sequence: number;
     samples: Int16Array;
     timestamp: number;
+}
+
+interface TranscriptUtterance {
+    speaker: string;
+    text: string;
+    confidence: number;
+    startedAt: number;
+    endedAt: number;
+}
+
+/**
+ * Trigger live recommendations on the backend when a question is detected
+ */
+async function triggerLiveRecommendations(
+    sessionId: string,
+    question: string,
+    transcriptBuffer: TranscriptUtterance[]
+): Promise<void> {
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/calls/${sessionId}/trigger-recommendations`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                question,
+                recentTranscript: transcriptBuffer,
+                timestamp: Date.now(),
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Backend returned ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log(`[streamCapture:${sessionId}] Recommendations triggered: ${result.ok ? 'success' : 'failed'}`);
+    } catch (error) {
+        console.error(`[streamCapture:${sessionId}] Error calling backend:`, error);
+        throw error;
+    }
 }
 
 /**
@@ -139,6 +183,9 @@ export async function startStreamingCapture(
     let transcriptCount = 0;
     let lastEventAt: number | undefined;
 
+    // Transcript buffer for question context
+    const transcriptBuffer: TranscriptUtterance[] = [];
+
     // Connect to Deepgram
     try {
         await deepgramStream.connect();
@@ -177,6 +224,36 @@ export async function startStreamingCapture(
     deepgramStream.on('transcript', (event: TranscriptStreamEvent) => {
         transcriptCount++;
         lastEventAt = Date.now();
+
+        // Store final transcripts in buffer for question context
+        if (event.isFinal && event.text && event.speaker) {
+            const utterance: TranscriptUtterance = {
+                speaker: event.speaker,
+                text: event.text,
+                confidence: event.confidence || 0,
+                startedAt: event.startTime || Date.now(),
+                endedAt: event.endTime || Date.now(),
+            };
+
+            transcriptBuffer.push(utterance);
+
+            // Keep only last N utterances
+            if (transcriptBuffer.length > MAX_TRANSCRIPT_BUFFER) {
+                transcriptBuffer.shift();
+            }
+
+            // Detect questions in final transcripts
+            const detection = QuestionDetector.detect(event.text);
+            if (detection.isQuestion && detection.confidence > 0.6) {
+                console.log(`[streamCapture:${sessionId}] Question detected: "${event.text}" (confidence: ${detection.confidence}, type: ${detection.questionType})`);
+
+                // Trigger live recommendations by calling backend
+                triggerLiveRecommendations(sessionId, event.text, transcriptBuffer).catch(err => {
+                    console.error(`[streamCapture:${sessionId}] Failed to trigger recommendations:`, err);
+                });
+            }
+        }
+
         onTranscript(event);
     });
 

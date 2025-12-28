@@ -9,7 +9,9 @@ import {
   processCall,
   getInsights,
   subscribeToTranscriptStream,
-  type TranscriptEvent
+  type TranscriptEvent,
+  subscribeToRecommendations,
+  type RecommendationEvent
 } from '../lib/api';
 import { buildViewModel, type CallInsightsViewModel } from '../lib/viewModel';
 import { copyToClipboard } from '../lib/clipboard';
@@ -33,6 +35,8 @@ export default function CallSession() {
   const [viewModel, setViewModel] = useState<CallInsightsViewModel | null>(null);
   const [transcriptUtterances, setTranscriptUtterances] = useState<TranscriptUtterance[]>([]);
   const [unsubscribeSSE, setUnsubscribeSSE] = useState<(() => void) | null>(null);
+  const [liveRecommendations, setLiveRecommendations] = useState<RecommendationEvent['recommendation'][]>([]);
+  const [unsubscribeRecommendations, setUnsubscribeRecommendations] = useState<(() => void) | null>(null);
 
   const handleStart = async () => {
     setState('starting');
@@ -67,6 +71,28 @@ export default function CallSession() {
         }
       );
       setUnsubscribeSSE(() => cleanup);
+
+      // Start SSE connection for live recommendations
+      const recommendationCleanup = subscribeToRecommendations(
+        newSessionId,
+        (event: RecommendationEvent) => {
+          if (event.type === 'recommendation.generated' && event.recommendation) {
+            setLiveRecommendations(prev => [...prev, event.recommendation!]);
+          } else if (event.type === 'recommendation.updated' && event.recommendation) {
+            // Replace the last recommendation with updated version
+            setLiveRecommendations(prev => {
+              const newRecs = [...prev];
+              newRecs[newRecs.length - 1] = event.recommendation!;
+              return newRecs;
+            });
+          }
+        },
+        (error) => {
+          console.error('Recommendations SSE error:', error);
+          // Don't fail the entire session on SSE error
+        }
+      );
+      setUnsubscribeRecommendations(() => recommendationCleanup);
     } catch (err) {
       setErrorMessage(String(err));
       setState('error');
@@ -76,10 +102,14 @@ export default function CallSession() {
   const handleStop = async () => {
     setState('stopping');
 
-    // Close SSE connection before stopping
+    // Close SSE connections before stopping
     if (unsubscribeSSE) {
       unsubscribeSSE();
       setUnsubscribeSSE(null);
+    }
+    if (unsubscribeRecommendations) {
+      unsubscribeRecommendations();
+      setUnsubscribeRecommendations(null);
     }
 
     try {
@@ -148,12 +178,17 @@ export default function CallSession() {
       unsubscribeSSE();
       setUnsubscribeSSE(null);
     }
+    if (unsubscribeRecommendations) {
+      unsubscribeRecommendations();
+      setUnsubscribeRecommendations(null);
+    }
 
     setState('idle');
     setSessionId('');
     setErrorMessage('');
     setViewModel(null);
     setTranscriptUtterances([]);
+    setLiveRecommendations([]);
   };
 
   const handleShare = async () => {
@@ -274,6 +309,7 @@ export default function CallSession() {
         <OverlayPanel
           transcriptUtterances={transcriptUtterances}
           transcriptText={transcriptText}
+          liveRecommendations={liveRecommendations}
           isRecording={true}
         />
       </div>
@@ -350,6 +386,7 @@ export default function CallSession() {
         <OverlayPanel
           transcriptUtterances={viewModel.transcriptUtterances}
           transcriptText={viewModel.transcriptText}
+          liveRecommendations={liveRecommendations}
           isRecording={false}
         />
       </div>

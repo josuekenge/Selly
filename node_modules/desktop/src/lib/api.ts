@@ -183,3 +183,55 @@ export function subscribeToTranscriptStream(
         console.log('[api] SSE connection closed by client');
     };
 }
+
+// SSE Recommendation Streaming Types
+export interface RecommendationEvent {
+    type: 'recommendation.generated' | 'recommendation.updated' | 'connection-established';
+    sessionId: string;
+    timestamp: number;
+    recommendation?: {
+        title: string;
+        message: string;
+        priority: 'high' | 'medium' | 'low';
+        category: 'answer' | 'objection' | 'next-step';
+    };
+}
+
+/**
+ * Subscribe to real-time recommendations stream from Backend
+ * Returns unsubscribe function to close the connection
+ */
+export function subscribeToRecommendations(
+    sessionId: string,
+    onEvent: (event: RecommendationEvent) => void,
+    onError?: (error: Error) => void
+): () => void {
+    const eventSource = new EventSource(
+        `${BACKEND_URL}/api/calls/${sessionId}/recommendations-stream`
+    );
+
+    eventSource.addEventListener('message', (event) => {
+        try {
+            const data = JSON.parse(event.data) as RecommendationEvent;
+            onEvent(data);
+        } catch (err) {
+            console.error('[api] Failed to parse recommendation SSE event:', err);
+            onError?.(new Error('Failed to parse recommendation SSE event'));
+        }
+    });
+
+    eventSource.addEventListener('error', (event) => {
+        if (eventSource.readyState === EventSource.CLOSED) {
+            console.log('[api] Recommendations SSE connection closed');
+        } else {
+            console.error('[api] Recommendations SSE connection error:', event);
+            onError?.(new Error('Recommendations SSE connection error'));
+        }
+    });
+
+    // Return unsubscribe function
+    return () => {
+        eventSource.close();
+        console.log('[api] Recommendations SSE connection closed by client');
+    };
+}
