@@ -127,7 +127,7 @@ export default function OverlayPanel({
             className="flex items-center gap-1.5 text-slate-300 text-[11px] hover:text-white transition-colors mr-1.5 font-medium"
             onMouseDown={(e) => e.stopPropagation()} // Prevent drag start
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'} shadow-[0_0_6px_${isPaused ? 'rgba(234,179,8,0.6)' : 'rgba(239,68,68,0.6)'}]`}></span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? 'bg-yellow-500 shadow-yellow-500/60' : 'bg-red-500 animate-pulse shadow-red-500/60'}`}></span>
             <span>{isPaused ? 'Paused' : 'Rec'}</span>
             <ChevronDown size={10} className="opacity-50 ml-0.5" />
           </button>
@@ -293,10 +293,10 @@ export default function OverlayPanel({
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center border border-white/10">
                       <FileText size={20} className="text-indigo-400/60" />
                     </div>
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
+                    <div className={`absolute -top-1 -right-1 w-3 h-3 rounded-full shadow-lg ${isPaused ? 'bg-yellow-500 shadow-yellow-500/50' : 'bg-green-500 animate-pulse shadow-green-500/50'}`}></div>
                   </div>
-                  <p className="text-slate-500 font-medium mb-1">Listening...</p>
-                  <p className="text-slate-600 text-[9px]">Real-time transcriptions will appear here</p>
+                  <p className="text-slate-500 font-medium mb-1">{isPaused ? 'Paused' : 'Listening...'}</p>
+                  <p className="text-slate-600 text-[9px]">{isPaused ? 'Resume to continue transcription' : 'Real-time transcriptions will appear here'}</p>
                 </div>
               ) : (
                 transcriptUtterances.map((utt, i) => (

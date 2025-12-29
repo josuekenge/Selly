@@ -13,7 +13,11 @@
       "Bash(npm install:*)",
       "Bash(cat:*)",
       "Bash(timeout 5 npm run dev:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash([ -f .env ])",
+      "Bash(chmod:*)",
+      "Bash(node test-transcription.js:*)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []

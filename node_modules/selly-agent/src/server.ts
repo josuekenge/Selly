@@ -159,14 +159,72 @@ function handleCaptureStatus(_req: IncomingMessage, res: ServerResponse): void {
  * Handle GET /health
  */
 function handleHealth(_req: IncomingMessage, res: ServerResponse): void {
+    const deepgramConfigured = !!process.env.DEEPGRAM_API_KEY && process.env.DEEPGRAM_API_KEY !== 'your_deepgram_api_key_here';
+
     sendJson(res, 200, {
         status: 'ok',
         service: 'selly-agent',
         version: '0.1.0',
         platform: process.platform,
         sidecarAvailable: isSidecarAvailable(),
+        deepgramConfigured,
+        activeSessions: getActiveSessions().length,
         timestamp: new Date().toISOString(),
     });
+}
+
+/**
+ * Handle GET /diagnostic
+ * Comprehensive diagnostic endpoint for debugging
+ */
+function handleDiagnostic(_req: IncomingMessage, res: ServerResponse): void {
+    const deepgramApiKey = process.env.DEEPGRAM_API_KEY || '';
+    const deepgramConfigured = !!deepgramApiKey && deepgramApiKey !== 'your_deepgram_api_key_here';
+
+    const diagnostic = {
+        status: 'ok',
+        service: 'selly-agent',
+        timestamp: new Date().toISOString(),
+        platform: {
+            os: process.platform,
+            nodeVersion: process.version,
+            arch: process.arch,
+        },
+        configuration: {
+            agentPort: PORT,
+            backendUrl: process.env.BACKEND_URL || 'not set',
+            deepgramConfigured,
+            deepgramKeyLength: deepgramApiKey ? deepgramApiKey.length : 0,
+            deepgramKeyPrefix: deepgramApiKey ? deepgramApiKey.substring(0, 8) + '...' : 'not set',
+        },
+        sidecar: {
+            available: isSidecarAvailable(),
+            platform: process.platform === 'win32' ? 'supported' : 'unsupported',
+        },
+        sessions: {
+            active: getActiveSessions(),
+            count: getActiveSessions().length,
+        },
+        checks: {
+            deepgramReady: deepgramConfigured && isSidecarAvailable(),
+            canStartCapture: process.platform === 'win32' && isSidecarAvailable(),
+            canTranscribe: deepgramConfigured,
+        },
+        warnings: [] as string[],
+    };
+
+    // Add warnings
+    if (!deepgramConfigured) {
+        diagnostic.warnings.push('DEEPGRAM_API_KEY not configured - transcription disabled');
+    }
+    if (!isSidecarAvailable()) {
+        diagnostic.warnings.push('Sidecar executable not found - run "npm run build:sidecar"');
+    }
+    if (process.platform !== 'win32') {
+        diagnostic.warnings.push('Audio capture only supported on Windows');
+    }
+
+    sendJson(res, 200, diagnostic);
 }
 
 /**
@@ -273,6 +331,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         handleCaptureStatus(req, res);
     } else if (url === '/health' && method === 'GET') {
         handleHealth(req, res);
+    } else if (url === '/diagnostic' && method === 'GET') {
+        handleDiagnostic(req, res);
     } else {
         // Check for SSE transcript stream endpoint
         const transcriptStreamMatch = url.match(/^\/capture\/([^/]+)\/transcript-stream$/);
