@@ -12,7 +12,8 @@
       "Bash(find:*)",
       "Bash(npm install:*)",
       "Bash(cat:*)",
-      "Bash(timeout 5 npm run dev:*)"
+      "Bash(timeout 5 npm run dev:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []
