@@ -75,12 +75,15 @@ export class SSEConnectionManager {
     broadcastTranscript(sessionId: string, event: TranscriptEvent): void {
         const clients = this.connections.get(sessionId);
         if (!clients || clients.size === 0) {
+            console.log(`[sse] No clients connected for ${sessionId}, skipping broadcast`);
             return;
         }
 
         const sseData = this.formatSSEEvent(event);
         let successCount = 0;
         let failCount = 0;
+
+        console.log(`[sse] Broadcasting ${event.type} transcript to ${clients.size} client(s) for ${sessionId}`);
 
         clients.forEach((client) => {
             try {
@@ -92,6 +95,8 @@ export class SSEConnectionManager {
                 failCount++;
             }
         });
+
+        console.log(`[sse] Broadcast complete: ${successCount} success, ${failCount} failed for ${sessionId}`);
 
         if (failCount > 0) {
             console.warn(`[sse] Failed to send to ${failCount}/${clients.size} clients for ${sessionId}`);

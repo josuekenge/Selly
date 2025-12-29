@@ -7,6 +7,8 @@ export interface CallInsightsViewModel {
     speaker: SpeakerLabel;
     text: string;
     confidence: number;
+    isFinal?: boolean;
+    timestamp?: number;
   }[];
   transcriptText: string;
   bullets: string[];
@@ -69,7 +71,9 @@ export function buildViewModel(raw: unknown): CallInsightsViewModel {
           return {
             speaker: mapSpeaker(obj.speaker),
             text: obj.text,
-            confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5
+            confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5,
+            isFinal: true, // Backend transcripts are always final
+            timestamp: obj.timestamp || Date.now()
           };
         })
         .filter((u: any) => u !== null)

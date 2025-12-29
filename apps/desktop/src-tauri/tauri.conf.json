@@ -13,8 +13,24 @@
     "windows": [
       {
         "title": "Selly - Sales Copilot",
+        "label": "main",
         "width": 800,
         "height": 600
+      },
+      {
+        "title": "Selly Overlay",
+        "label": "overlay",
+        "url": "/#/overlay",
+        "width": 380,
+        "height": 520,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "transparent": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "x": 50,
+        "y": 100
       }
     ],
     "security": {

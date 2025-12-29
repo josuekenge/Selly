@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 interface OverlayPanelProps {
-  transcriptUtterances: { speaker: SpeakerLabel; text: string; confidence: number }[];
+  transcriptUtterances: { speaker: SpeakerLabel; text: string; confidence: number; isFinal?: boolean; timestamp?: number }[];
   transcriptText: string;
   liveRecommendations?: Array<{
     title: string;
@@ -36,7 +36,8 @@ export default function OverlayPanel({
   transcriptText,
   liveRecommendations = [],
   isRecording = false,
-  onStop
+  onStop,
+  onPause
 }: OverlayPanelProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'transcript'>('chat');
   const [inputText, setInputText] = useState('');
@@ -130,6 +131,7 @@ export default function OverlayPanel({
 
           <button
             onMouseDown={(e) => e.stopPropagation()}
+            onClick={onPause}
             className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors" title="Pause">
             <Pause size={10} fill="currentColor" />
           </button>
@@ -163,8 +165,8 @@ export default function OverlayPanel({
         <button
           onClick={() => setActiveTab('chat')}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-t-lg transition-all ${activeTab === 'chat'
-              ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
-              : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
+            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
             }`}
         >
           <MessageSquare size={12} className={activeTab === 'chat' ? 'text-indigo-400' : ''} />
@@ -173,8 +175,8 @@ export default function OverlayPanel({
         <button
           onClick={() => setActiveTab('transcript')}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-t-lg transition-all ${activeTab === 'transcript'
-              ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
-              : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            ? 'text-white bg-white/5 border-t border-x border-white/5 shadow-sm'
+            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
             }`}
         >
           <FileText size={12} />
@@ -240,8 +242,8 @@ export default function OverlayPanel({
                 <button
                   disabled={!inputText}
                   className={`absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md transition-all ${inputText
-                      ? 'bg-indigo-500 text-white shadow-lg'
-                      : 'text-slate-600'
+                    ? 'bg-indigo-500 text-white shadow-lg'
+                    : 'text-slate-600'
                     }`}
                 >
                   <Send size={10} className={inputText ? 'ml-px' : ''} />
@@ -252,8 +254,8 @@ export default function OverlayPanel({
                 <button
                   onClick={() => setIsSmartMode(!isSmartMode)}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium transition-all ${isSmartMode
-                      ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                      : 'text-slate-600 hover:text-slate-400'
+                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                    : 'text-slate-600 hover:text-slate-400'
                     }`}
                 >
                   <Sparkles size={8} className={isSmartMode ? 'fill-indigo-300' : ''} />
@@ -280,18 +282,45 @@ export default function OverlayPanel({
             <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans text-xs leading-relaxed scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent" ref={scrollRef}>
               {transcriptUtterances.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-slate-600 text-[10px] text-center px-8">
-                  <p>Real-time transcriptions will appear here.</p>
+                  <div className="mb-3 relative">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center border border-white/10">
+                      <FileText size={20} className="text-indigo-400/60" />
+                    </div>
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></div>
+                  </div>
+                  <p className="text-slate-500 font-medium mb-1">Listening...</p>
+                  <p className="text-slate-600 text-[9px]">Real-time transcriptions will appear here</p>
                 </div>
               ) : (
                 transcriptUtterances.map((utt, i) => (
-                  <div key={i} className="group animate-in fade-in slide-in-from-bottom-1 duration-300">
+                  <div
+                    key={`${i}-${utt.timestamp}`}
+                    className={`group animate-in fade-in slide-in-from-bottom-1 duration-300 ${
+                      utt.isFinal === false ? 'opacity-70' : 'opacity-100'
+                    }`}
+                  >
                     <div className="flex items-baseline gap-1.5 mb-0.5">
-                      <span className={`text-[9px] uppercase tracking-wider font-bold ${utt.speaker === 'Rep' ? 'text-indigo-400' : 'text-emerald-400'
-                        }`}>
+                      <span className={`text-[9px] uppercase tracking-wider font-bold ${
+                        utt.speaker === 'Rep' ? 'text-indigo-400' :
+                        utt.speaker === 'Prospect' ? 'text-emerald-400' :
+                        'text-amber-400'
+                      }`}>
                         {utt.speaker}
                       </span>
+                      {utt.isFinal === false && (
+                        <span className="text-[8px] text-slate-600 italic">typing...</span>
+                      )}
+                      {utt.confidence !== undefined && utt.confidence > 0 && (
+                        <span className="text-[8px] text-slate-600 ml-auto">
+                          {Math.round(utt.confidence * 100)}%
+                        </span>
+                      )}
                     </div>
-                    <p className="text-slate-300 group-hover:text-slate-100 transition-colors">{utt.text}</p>
+                    <p className={`text-slate-300 group-hover:text-slate-100 transition-colors leading-relaxed ${
+                      utt.isFinal === false ? 'italic' : ''
+                    }`}>
+                      {utt.text}
+                    </p>
                   </div>
                 ))
               )}

@@ -19,6 +19,7 @@ import OverlayPanel from '../components/OverlayPanel';
 import ActiveSessionView from '../components/ActiveSessionView';
 import ErrorAlert from '../components/ErrorAlert';
 import Dashboard from './Dashboard';
+import { openOverlayWindow, closeOverlayWindow } from '../lib/windowManager';
 
 type State = 'idle' | 'starting' | 'recording' | 'stopping' | 'uploading' | 'processing' | 'ready' | 'error';
 
@@ -28,6 +29,8 @@ interface TranscriptUtterance {
   speaker: SpeakerLabel;
   text: string;
   confidence: number;
+  isFinal: boolean;
+  timestamp: number;
 }
 
 export default function CallSession() {
@@ -48,10 +51,20 @@ export default function CallSession() {
       await agentStartCapture(newSessionId);
       setState('recording');
 
+      // Open overlay pop-out window
+      try {
+        await openOverlayWindow(newSessionId);
+      } catch (err) {
+        console.warn('[CallSession] Failed to open overlay window:', err);
+        // Continue without pop-out, in-app overlay will still work
+      }
+
       // Start SSE connection for live transcripts
+      console.log('[CallSession] Setting up transcript SSE for session:', newSessionId);
       const cleanup = subscribeToTranscriptStream(
         newSessionId,
         (event: TranscriptEvent) => {
+          console.log('[CallSession] Received transcript event:', event);
           if (event.type === 'partial' || event.type === 'final') {
             // Map speaker to SpeakerLabel format
             const speakerLabel: SpeakerLabel =
@@ -59,16 +72,37 @@ export default function CallSession() {
                 event.speaker === 'prospect' ? 'Prospect' :
                   'Unknown';
 
-            // Add new utterance to state
-            setTranscriptUtterances(prev => [...prev, {
+            const newUtterance: TranscriptUtterance = {
               speaker: speakerLabel,
               text: event.text || '',
               confidence: event.confidence || 0,
-            }]);
+              isFinal: event.type === 'final',
+              timestamp: event.timestamp,
+            };
+
+            setTranscriptUtterances(prev => {
+              // If this is a partial transcript, check if we should replace the last partial
+              // from the same speaker (to show live updates smoothly)
+              if (event.type === 'partial') {
+                const lastUtterance = prev[prev.length - 1];
+                if (lastUtterance && !lastUtterance.isFinal && lastUtterance.speaker === speakerLabel) {
+                  // Replace the last partial utterance with the new one
+                  console.log(`[CallSession] Replacing partial transcript from ${speakerLabel}: "${newUtterance.text.substring(0, 30)}..."`);
+                  return [...prev.slice(0, -1), newUtterance];
+                } else {
+                  console.log(`[CallSession] Adding new partial transcript from ${speakerLabel}: "${newUtterance.text.substring(0, 30)}..."`);
+                }
+              } else {
+                console.log(`[CallSession] Adding FINAL transcript from ${speakerLabel}: "${newUtterance.text.substring(0, 30)}..."`);
+              }
+
+              // Otherwise, add the new utterance
+              return [...prev, newUtterance];
+            });
           }
         },
         (error) => {
-          console.error('SSE error:', error);
+          console.error('[CallSession] SSE Transcript error:', error);
           // Don't fail the entire session on SSE error, just log it
         }
       );
@@ -125,6 +159,9 @@ export default function CallSession() {
       unsubscribeRecommendations();
       setUnsubscribeRecommendations(null);
     }
+
+    // Close overlay pop-out window
+    await closeOverlayWindow();
 
     try {
       const { fileBase64 } = await agentStopCapture(sessionId);
@@ -290,8 +327,11 @@ export default function CallSession() {
 
     return (
       <>
-        {/* Full-screen Active Session backdrop */}
-        <ActiveSessionView onStop={handleStop} />
+        {/* Full-screen Active Session backdrop with live transcripts */}
+        <ActiveSessionView
+          onStop={handleStop}
+          transcriptUtterances={transcriptUtterances}
+        />
 
         {/* Draggable Overlay Panel */}
         <OverlayPanel
@@ -300,6 +340,7 @@ export default function CallSession() {
           liveRecommendations={liveRecommendations}
           isRecording={true}
           onStop={handleStop}
+          onPause={() => console.log('[CallSession] Pause clicked - pause feature not yet implemented')}
         />
       </>
     );

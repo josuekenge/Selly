@@ -64,6 +64,10 @@ export class LiveTranscriber extends EventEmitter {
             };
 
             // Broadcast to all connected SSE clients
+            const clientCount = sseManager.getClientCount(this.sessionId);
+            console.log(
+                `[live-transcriber:${this.sessionId}] Broadcasting to ${clientCount} client(s): "${sseEvent.text?.substring(0, 50)}..."`
+            );
             sseManager.broadcastTranscript(this.sessionId, sseEvent);
 
             // Also emit for local listeners

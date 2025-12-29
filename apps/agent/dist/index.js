@@ -9,7 +9,10 @@
 // - Question detection
 //
 // Current phase: Audio capture via HTTP server
+// Load environment variables from .env file
+import 'dotenv/config';
 import { startServer } from './server.js';
 console.log('Selly Agent starting...');
+console.log('[agent] DEEPGRAM_API_KEY:', process.env.DEEPGRAM_API_KEY ? '✓ Set' : '✗ Not set');
 startServer();
 //# sourceMappingURL=index.js.map

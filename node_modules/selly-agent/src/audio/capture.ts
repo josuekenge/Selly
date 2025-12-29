@@ -130,6 +130,7 @@ export async function startCapture(sessionId: string): Promise<CaptureStartResul
     let liveTranscriber: LiveTranscriber | null = null;
     if (DEEPGRAM_API_KEY && child.stdout) {
         try {
+            console.log(`[capture:${sessionId}] Initializing LiveTranscriber with Deepgram...`);
             liveTranscriber = new LiveTranscriber({
                 sessionId,
                 deepgramApiKey: DEEPGRAM_API_KEY,
@@ -138,13 +139,16 @@ export async function startCapture(sessionId: string): Promise<CaptureStartResul
             });
 
             // Start Deepgram connection
+            console.log(`[capture:${sessionId}] Connecting to Deepgram...`);
             await liveTranscriber.start();
+            console.log(`[capture:${sessionId}] Deepgram connection established`);
 
             // Attach to sidecar stdout for PCM frames
+            console.log(`[capture:${sessionId}] Attaching to sidecar stdout stream...`);
             liveTranscriber.attachToStream(child.stdout);
 
             activeLiveTranscribers.set(sessionId, liveTranscriber);
-            console.log(`[capture:${sessionId}] Live transcription enabled`);
+            console.log(`[capture:${sessionId}] ✓ Live transcription fully enabled and streaming`);
         } catch (err) {
             console.warn(`[capture:${sessionId}] Live transcription failed to start:`, err);
             // Continue without live transcription

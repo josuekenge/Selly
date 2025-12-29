@@ -154,11 +154,18 @@ export function subscribeToTranscriptStream(
     onEvent: (event: TranscriptEvent) => void,
     onError?: (error: Error) => void
 ): () => void {
+    console.log(`[api] Connecting to transcript SSE: ${AGENT_URL}/capture/${sessionId}/transcript-stream`);
+
     const eventSource = new EventSource(
         `${AGENT_URL}/capture/${sessionId}/transcript-stream`
     );
 
+    eventSource.addEventListener('open', () => {
+        console.log('[api] SSE transcript connection OPENED');
+    });
+
     eventSource.addEventListener('message', (event) => {
+        console.log('[api] SSE message received:', event.data?.substring(0, 100));
         try {
             const data = JSON.parse(event.data) as TranscriptEvent;
             onEvent(data);
@@ -172,7 +179,7 @@ export function subscribeToTranscriptStream(
         if (eventSource.readyState === EventSource.CLOSED) {
             console.log('[api] SSE connection closed');
         } else {
-            console.error('[api] SSE connection error:', event);
+            console.error('[api] SSE connection error, readyState:', eventSource.readyState, event);
             onError?.(new Error('SSE connection error'));
         }
     });
