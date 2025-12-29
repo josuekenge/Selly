@@ -39,6 +39,30 @@ export async function agentStopCapture(sessionId: string): Promise<{ outputPath:
     return data;
 }
 
+export async function agentPauseCapture(sessionId: string): Promise<void> {
+    const res = await fetch(`${AGENT_URL}/capture/pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId })
+    });
+    if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `agentPauseCapture failed: ${res.status}`);
+    }
+}
+
+export async function agentResumeCapture(sessionId: string): Promise<void> {
+    const res = await fetch(`${AGENT_URL}/capture/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId })
+    });
+    if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `agentResumeCapture failed: ${res.status}`);
+    }
+}
+
 interface SignUploadArgs {
     sessionId: string;
     contentType: string;
@@ -134,7 +158,7 @@ export async function getInsights(sessionId: string): Promise<unknown> {
 
 // SSE Transcript Streaming Types
 export interface TranscriptEvent {
-    type: 'partial' | 'final' | 'session-closed' | 'error' | 'connection-established';
+    type: 'partial' | 'final' | 'session-closed' | 'error' | 'connection-established' | 'paused' | 'resumed';
     sessionId: string;
     timestamp: number;
     text?: string;
@@ -148,46 +172,94 @@ export interface TranscriptEvent {
 /**
  * Subscribe to real-time transcript stream from Agent
  * Returns unsubscribe function to close the connection
+ *
+ * Features:
+ * - Automatic reconnection with exponential backoff
+ * - Handles timing issues when session is still initializing
  */
 export function subscribeToTranscriptStream(
     sessionId: string,
     onEvent: (event: TranscriptEvent) => void,
     onError?: (error: Error) => void
 ): () => void {
-    console.log(`[api] Connecting to transcript SSE: ${AGENT_URL}/capture/${sessionId}/transcript-stream`);
+    let eventSource: EventSource | null = null;
+    let shouldReconnect = true;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+    const baseReconnectDelay = 500; // 500ms
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-    const eventSource = new EventSource(
-        `${AGENT_URL}/capture/${sessionId}/transcript-stream`
-    );
+    const connect = () => {
+        if (!shouldReconnect) return;
 
-    eventSource.addEventListener('open', () => {
-        console.log('[api] SSE transcript connection OPENED');
-    });
+        console.log(`[api] Connecting to transcript SSE: ${AGENT_URL}/capture/${sessionId}/transcript-stream (attempt ${reconnectAttempts + 1})`);
 
-    eventSource.addEventListener('message', (event) => {
-        console.log('[api] SSE message received:', event.data?.substring(0, 100));
-        try {
-            const data = JSON.parse(event.data) as TranscriptEvent;
-            onEvent(data);
-        } catch (err) {
-            console.error('[api] Failed to parse SSE event:', err);
-            onError?.(new Error('Failed to parse SSE event'));
-        }
-    });
+        eventSource = new EventSource(
+            `${AGENT_URL}/capture/${sessionId}/transcript-stream`
+        );
 
-    eventSource.addEventListener('error', (event) => {
-        if (eventSource.readyState === EventSource.CLOSED) {
-            console.log('[api] SSE connection closed');
-        } else {
-            console.error('[api] SSE connection error, readyState:', eventSource.readyState, event);
-            onError?.(new Error('SSE connection error'));
-        }
-    });
+        eventSource.addEventListener('open', () => {
+            console.log('[api] SSE transcript connection OPENED');
+            reconnectAttempts = 0; // Reset on successful connection
+        });
+
+        eventSource.addEventListener('message', (event) => {
+            console.log('[api] SSE message received:', event.data?.substring(0, 100));
+            try {
+                const data = JSON.parse(event.data) as TranscriptEvent;
+                onEvent(data);
+            } catch (err) {
+                console.error('[api] Failed to parse SSE event:', err);
+                onError?.(new Error('Failed to parse SSE event'));
+            }
+        });
+
+        eventSource.addEventListener('error', (event) => {
+            if (eventSource?.readyState === EventSource.CLOSED) {
+                console.log('[api] SSE transcript connection closed');
+
+                // Attempt to reconnect
+                if (shouldReconnect && reconnectAttempts < maxReconnectAttempts) {
+                    const delay = Math.min(
+                        baseReconnectDelay * Math.pow(2, reconnectAttempts),
+                        5000 // Max 5 seconds
+                    );
+                    reconnectAttempts++;
+
+                    console.log(`[api] Reconnecting transcript SSE in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+
+                    reconnectTimeout = setTimeout(() => {
+                        connect();
+                    }, delay);
+                } else if (reconnectAttempts >= maxReconnectAttempts) {
+                    console.error('[api] Max reconnection attempts reached for transcript SSE');
+                    onError?.(new Error('Failed to establish transcript connection after multiple attempts'));
+                }
+            } else {
+                console.error('[api] SSE connection error, readyState:', eventSource?.readyState, event);
+                onError?.(new Error('SSE connection error'));
+            }
+        });
+    };
+
+    // Initial connection
+    connect();
 
     // Return unsubscribe function
     return () => {
-        eventSource.close();
-        console.log('[api] SSE connection closed by client');
+        shouldReconnect = false;
+
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+        }
+
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+
+        console.log('[api] SSE transcript connection closed by client');
     };
 }
 

@@ -11,6 +11,8 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import {
     startCapture,
     stopCapture,
+    pauseCapture,
+    resumeCapture,
     getActiveSessions,
     isSidecarAvailable,
     stopAllCaptures,
@@ -98,6 +100,50 @@ async function handleCaptureStop(req: IncomingMessage, res: ServerResponse): Pro
 }
 
 /**
+ * Handle POST /capture/pause
+ */
+async function handleCapturePause(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+        const body = (await parseJsonBody(req)) as { sessionId?: string };
+
+        if (!body.sessionId || typeof body.sessionId !== 'string') {
+            sendJson(res, 400, { ok: false, error: 'Missing or invalid sessionId' });
+            return;
+        }
+
+        const result = await pauseCapture(body.sessionId);
+        sendJson(res, result.ok ? 200 : 400, result);
+    } catch (error) {
+        sendJson(res, 500, {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+}
+
+/**
+ * Handle POST /capture/resume
+ */
+async function handleCaptureResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+        const body = (await parseJsonBody(req)) as { sessionId?: string };
+
+        if (!body.sessionId || typeof body.sessionId !== 'string') {
+            sendJson(res, 400, { ok: false, error: 'Missing or invalid sessionId' });
+            return;
+        }
+
+        const result = await resumeCapture(body.sessionId);
+        sendJson(res, result.ok ? 200 : 400, result);
+    } catch (error) {
+        sendJson(res, 500, {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+}
+
+/**
  * Handle GET /capture/status
  */
 function handleCaptureStatus(_req: IncomingMessage, res: ServerResponse): void {
@@ -140,7 +186,12 @@ async function handleTranscriptStream(
 
     // Check if capture session exists
     const activeSessions = getActiveSessions();
-    if (!activeSessions.includes(sessionId)) {
+    const sessionExists = activeSessions.includes(sessionId);
+
+    console.log(`[sse] Transcript stream request for session ${sessionId}, active: ${sessionExists}, all sessions: [${activeSessions.join(', ')}]`);
+
+    if (!sessionExists) {
+        console.warn(`[sse] Session ${sessionId} not found in active sessions. Client will retry.`);
         sendJson(res, 404, {
             ok: false,
             error: `No active capture session for sessionId: ${sessionId}`,
@@ -214,6 +265,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         await handleCaptureStart(req, res);
     } else if (url === '/capture/stop' && method === 'POST') {
         await handleCaptureStop(req, res);
+    } else if (url === '/capture/pause' && method === 'POST') {
+        await handleCapturePause(req, res);
+    } else if (url === '/capture/resume' && method === 'POST') {
+        await handleCaptureResume(req, res);
     } else if (url === '/capture/status' && method === 'GET') {
         handleCaptureStatus(req, res);
     } else if (url === '/health' && method === 'GET') {

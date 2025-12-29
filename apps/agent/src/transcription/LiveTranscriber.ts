@@ -24,6 +24,7 @@ export class LiveTranscriber extends EventEmitter {
     private deepgramStream: DeepgramStream;
     private buffer: Buffer = Buffer.alloc(0);
     private isRunning = false;
+    private isPaused = false;
     private expectedSequence = 0;
 
     constructor(config: LiveTranscriberConfig) {
@@ -172,8 +173,8 @@ export class LiveTranscriber extends EventEmitter {
             }
             this.expectedSequence = sequenceNumber + 1;
 
-            // Send to Deepgram
-            if (this.deepgramStream.isConnected()) {
+            // Send to Deepgram (skip if paused)
+            if (this.deepgramStream.isConnected() && !this.isPaused) {
                 this.deepgramStream.sendAudioChunk(pcmData);
             }
 
@@ -192,5 +193,41 @@ export class LiveTranscriber extends EventEmitter {
         this.buffer = Buffer.alloc(0);
 
         console.log(`[live-transcriber:${this.sessionId}] Stopped`);
+    }
+
+    /**
+     * Pause transcription (stop sending audio to Deepgram)
+     */
+    pause(): void {
+        if (!this.isRunning) return;
+
+        this.isPaused = true;
+        console.log(`[live-transcriber:${this.sessionId}] Paused`);
+
+        // Broadcast pause event to SSE clients
+        const pauseEvent = {
+            type: 'paused' as const,
+            sessionId: this.sessionId,
+            timestamp: Date.now(),
+        };
+        sseManager.broadcastTranscript(this.sessionId, pauseEvent);
+    }
+
+    /**
+     * Resume transcription (resume sending audio to Deepgram)
+     */
+    resume(): void {
+        if (!this.isRunning) return;
+
+        this.isPaused = false;
+        console.log(`[live-transcriber:${this.sessionId}] Resumed`);
+
+        // Broadcast resume event to SSE clients
+        const resumeEvent = {
+            type: 'resumed' as const,
+            sessionId: this.sessionId,
+            timestamp: Date.now(),
+        };
+        sseManager.broadcastTranscript(this.sessionId, resumeEvent);
     }
 }

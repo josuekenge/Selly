@@ -9,7 +9,7 @@ interface SSEClient {
 }
 
 interface TranscriptEvent {
-    type: 'partial' | 'final' | 'session-closed' | 'error' | 'connection-established';
+    type: 'partial' | 'final' | 'session-closed' | 'error' | 'connection-established' | 'paused' | 'resumed';
     sessionId: string;
     timestamp: number;
     text?: string;

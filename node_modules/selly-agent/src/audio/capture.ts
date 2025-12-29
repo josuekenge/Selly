@@ -27,6 +27,9 @@ const activeCaptures = new Map<string, ChildProcess>();
 // Map of active live transcribers
 const activeLiveTranscribers = new Map<string, LiveTranscriber>();
 
+// Map of paused sessions
+const pausedSessions = new Set<string>();
+
 // Deepgram API Key (from environment)
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || '';
 
@@ -305,4 +308,61 @@ export function getActiveSessions(): string[] {
 export async function stopAllCaptures(): Promise<void> {
     const sessions = getActiveSessions();
     await Promise.all(sessions.map((sessionId) => stopCapture(sessionId)));
+}
+
+/**
+ * Pauses audio capture and transcription for a session.
+ */
+export async function pauseCapture(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!isSessionActive(sessionId)) {
+        return { ok: false, error: 'No active capture session found' };
+    }
+
+    if (pausedSessions.has(sessionId)) {
+        return { ok: false, error: 'Session is already paused' };
+    }
+
+    // Pause the live transcriber (stops sending audio to Deepgram)
+    const transcriber = activeLiveTranscribers.get(sessionId);
+    if (transcriber) {
+        transcriber.pause();
+        console.log(`[capture:${sessionId}] Transcription paused`);
+    }
+
+    pausedSessions.add(sessionId);
+    console.log(`[capture:${sessionId}] Session paused`);
+
+    return { ok: true };
+}
+
+/**
+ * Resumes audio capture and transcription for a session.
+ */
+export async function resumeCapture(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!isSessionActive(sessionId)) {
+        return { ok: false, error: 'No active capture session found' };
+    }
+
+    if (!pausedSessions.has(sessionId)) {
+        return { ok: false, error: 'Session is not paused' };
+    }
+
+    // Resume the live transcriber
+    const transcriber = activeLiveTranscribers.get(sessionId);
+    if (transcriber) {
+        transcriber.resume();
+        console.log(`[capture:${sessionId}] Transcription resumed`);
+    }
+
+    pausedSessions.delete(sessionId);
+    console.log(`[capture:${sessionId}] Session resumed`);
+
+    return { ok: true };
+}
+
+/**
+ * Checks if a session is currently paused.
+ */
+export function isSessionPaused(sessionId: string): boolean {
+    return pausedSessions.has(sessionId);
 }

@@ -3,6 +3,7 @@ import { copyToClipboard } from '../lib/clipboard';
 import type { SpeakerLabel } from '../lib/viewModel';
 import {
   Pause,
+  Play,
   Square,
   X,
   MessageSquare,
@@ -27,8 +28,10 @@ interface OverlayPanelProps {
     category: 'answer' | 'objection' | 'next-step';
   }>;
   isRecording?: boolean;
+  isPaused?: boolean;
   onStop?: () => void;
   onPause?: () => void;
+  onResume?: () => void;
 }
 
 export default function OverlayPanel({
@@ -36,8 +39,10 @@ export default function OverlayPanel({
   transcriptText,
   liveRecommendations = [],
   isRecording = false,
+  isPaused = false,
   onStop,
-  onPause
+  onPause,
+  onResume
 }: OverlayPanelProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'transcript'>('chat');
   const [inputText, setInputText] = useState('');
@@ -122,8 +127,8 @@ export default function OverlayPanel({
             className="flex items-center gap-1.5 text-slate-300 text-[11px] hover:text-white transition-colors mr-1.5 font-medium"
             onMouseDown={(e) => e.stopPropagation()} // Prevent drag start
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
-            <span>Rec</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'} shadow-[0_0_6px_${isPaused ? 'rgba(234,179,8,0.6)' : 'rgba(239,68,68,0.6)'}]`}></span>
+            <span>{isPaused ? 'Paused' : 'Rec'}</span>
             <ChevronDown size={10} className="opacity-50 ml-0.5" />
           </button>
 
@@ -131,9 +136,11 @@ export default function OverlayPanel({
 
           <button
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={onPause}
-            className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors" title="Pause">
-            <Pause size={10} fill="currentColor" />
+            onClick={isPaused ? onResume : onPause}
+            className={`p-1 hover:bg-white/10 rounded-full transition-colors ${isPaused ? 'text-green-400 hover:text-green-300' : 'text-slate-400 hover:text-white'}`}
+            title={isPaused ? 'Resume' : 'Pause'}
+          >
+            {isPaused ? <Play size={10} fill="currentColor" /> : <Pause size={10} fill="currentColor" />}
           </button>
 
           <button

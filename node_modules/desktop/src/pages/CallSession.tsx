@@ -3,6 +3,8 @@ import {
   startCall,
   agentStartCapture,
   agentStopCapture,
+  agentPauseCapture,
+  agentResumeCapture,
   signUpload,
   uploadToSignedUrl,
   stopCall,
@@ -42,6 +44,7 @@ export default function CallSession() {
   const [unsubscribeSSE, setUnsubscribeSSE] = useState<(() => void) | null>(null);
   const [liveRecommendations, setLiveRecommendations] = useState<NonNullable<RecommendationEvent['recommendation']>[]>([]);
   const [unsubscribeRecommendations, setUnsubscribeRecommendations] = useState<(() => void) | null>(null);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
 
   const handleStart = async () => {
     setState('starting');
@@ -65,6 +68,20 @@ export default function CallSession() {
         newSessionId,
         (event: TranscriptEvent) => {
           console.log('[CallSession] Received transcript event:', event);
+
+          // Handle pause/resume events
+          if (event.type === 'paused') {
+            console.log('[CallSession] Session paused by backend');
+            setIsPaused(true);
+            return;
+          }
+
+          if (event.type === 'resumed') {
+            console.log('[CallSession] Session resumed by backend');
+            setIsPaused(false);
+            return;
+          }
+
           if (event.type === 'partial' || event.type === 'final') {
             // Map speaker to SpeakerLabel format
             const speakerLabel: SpeakerLabel =
@@ -223,6 +240,34 @@ export default function CallSession() {
     }
   };
 
+  const handlePause = async () => {
+    if (!sessionId) return;
+
+    try {
+      console.log('[CallSession] Pausing session...');
+      await agentPauseCapture(sessionId);
+      setIsPaused(true);
+      console.log('[CallSession] Session paused successfully');
+    } catch (err) {
+      console.error('[CallSession] Failed to pause session:', err);
+      setErrorMessage(`Failed to pause: ${err}`);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!sessionId) return;
+
+    try {
+      console.log('[CallSession] Resuming session...');
+      await agentResumeCapture(sessionId);
+      setIsPaused(false);
+      console.log('[CallSession] Session resumed successfully');
+    } catch (err) {
+      console.error('[CallSession] Failed to resume session:', err);
+      setErrorMessage(`Failed to resume: ${err}`);
+    }
+  };
+
   const handleReset = () => {
     // Close SSE if still open
     if (unsubscribeSSE) {
@@ -240,6 +285,7 @@ export default function CallSession() {
     setViewModel(null);
     setTranscriptUtterances([]);
     setLiveRecommendations([]);
+    setIsPaused(false);
   };
 
   const handleShare = async () => {
@@ -339,8 +385,10 @@ export default function CallSession() {
           transcriptText={transcriptText}
           liveRecommendations={liveRecommendations}
           isRecording={true}
+          isPaused={isPaused}
           onStop={handleStop}
-          onPause={() => console.log('[CallSession] Pause clicked - pause feature not yet implemented')}
+          onPause={handlePause}
+          onResume={handleResume}
         />
       </>
     );
