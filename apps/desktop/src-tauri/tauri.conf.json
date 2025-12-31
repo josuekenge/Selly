@@ -30,7 +30,8 @@
         "skipTaskbar": true,
         "visible": false,
         "x": 50,
-        "y": 100
+        "y": 100,
+        "dragDropEnabled": false
       }
     ],
     "security": {

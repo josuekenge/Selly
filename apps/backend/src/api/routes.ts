@@ -555,6 +555,85 @@ router.delete('/workspaces/:workspaceId/knowledge/:docId', async (req: Request, 
 });
 
 /**
+ * POST /api/calls/:sessionId/summarize
+ * Generate real-time summary of conversation using OpenAI
+ */
+router.post('/calls/:sessionId/summarize', async (req: Request, res: Response) => {
+    try {
+        const { sessionId } = req.params;
+        const body = req.body as {
+            transcript?: Array<{
+                speaker: string;
+                text: string;
+            }>;
+        };
+
+        if (!sessionId) {
+            res.status(400).json({ ok: false, error: 'Missing sessionId' });
+            return;
+        }
+
+        if (!body.transcript || body.transcript.length === 0) {
+            res.status(400).json({ ok: false, error: 'Missing or empty transcript' });
+            return;
+        }
+
+        if (!isOpenAIConfigured()) {
+            res.status(503).json({ ok: false, error: 'OpenAI not configured' });
+            return;
+        }
+
+        const transcriptText = body.transcript
+            .map(t => `${t.speaker}: ${t.text}`)
+            .join('\n');
+
+        // Call OpenAI to generate summary
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a sales call assistant. Generate a concise, structured summary of the ongoing conversation. Include: 1) Key discussion points 2) Customer pain points or objections 3) Action items or next steps. Keep it brief and actionable.'
+                    },
+                    {
+                        role: 'user',
+                        content: `Summarize this ongoing sales conversation:\n\n${transcriptText}`
+                    }
+                ],
+                temperature: 0.3,
+                max_tokens: 300
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`OpenAI API error: ${response.status}`);
+        }
+
+        const data: any = await response.json();
+        const summary = data.choices?.[0]?.message?.content || 'Unable to generate summary';
+
+        res.json({
+            ok: true,
+            sessionId,
+            summary,
+            timestamp: Date.now()
+        });
+    } catch (error) {
+        console.error('[api] Error in /calls/:sessionId/summarize:', error);
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+/**
  * GET /api/status
  * Get API configuration status
  */

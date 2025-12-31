@@ -121,27 +121,32 @@ export default function OverlayPanel({
 
       {/* Header / Controls */}
       <div
-        className={`bg-white/5 p-2 flex items-center justify-between border-b border-white/5 backdrop-blur-md ${standalone ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+        className={`bg-white/5 p-2 flex items-center justify-between border-b border-white/5 backdrop-blur-md ${standalone ? 'cursor-move' : 'cursor-grab active:cursor-grabbing'}`}
         onMouseDown={standalone ? undefined : handleDragStart}
-        data-tauri-drag-region={standalone}
+        {...(standalone ? { 'data-tauri-drag-region': '' } : {})}
       >
 
         {/* Recording Controls */}
         <div className="flex items-center bg-[#1A1D26]/80 rounded-full p-1 pl-2.5 pr-1 border border-white/5 shadow-lg backdrop-blur-md group hover:border-white/10 transition-colors">
-          <button
-            className="flex items-center gap-1.5 text-slate-300 text-[11px] hover:text-white transition-colors mr-1.5 font-medium"
+          <div
+            className="flex items-center gap-1.5 text-slate-300 text-[11px] mr-1.5 font-medium"
             onMouseDown={(e) => e.stopPropagation()} // Prevent drag start
           >
             <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? 'bg-yellow-500 shadow-yellow-500/60' : 'bg-red-500 animate-pulse shadow-red-500/60'}`}></span>
             <span>{isPaused ? 'Paused' : 'Rec'}</span>
             <ChevronDown size={10} className="opacity-50 ml-0.5" />
-          </button>
+          </div>
 
           <div className="h-3 w-[1px] bg-white/10 mx-1"></div>
 
           <button
+            type="button"
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={isPaused ? onResume : onPause}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              isPaused ? onResume?.() : onPause?.();
+            }}
             className={`p-1 hover:bg-white/10 rounded-full transition-colors ${isPaused ? 'text-green-400 hover:text-green-300' : 'text-slate-400 hover:text-white'}`}
             title={isPaused ? 'Resume' : 'Pause'}
           >
@@ -149,9 +154,15 @@ export default function OverlayPanel({
           </button>
 
           <button
+            type="button"
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={onStop}
-            className="p-1 hover:bg-red-500/20 rounded-full text-slate-400 hover:text-red-400 transition-colors" title="Stop"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onStop?.();
+            }}
+            className="p-1 hover:bg-red-500/20 rounded-full text-slate-400 hover:text-red-400 transition-colors"
+            title="Stop"
           >
             <Square size={10} fill="currentColor" />
           </button>
@@ -160,15 +171,26 @@ export default function OverlayPanel({
         {/* Drag Handle & Window Controls */}
         <div className="flex items-center gap-1">
           {/* 6 Dots Drag Handle */}
-          <div className="p-1.5 text-slate-500 hover:text-slate-300 transition-colors cursor-grab active:cursor-grabbing">
+          <div
+            className={`p-1.5 text-slate-500 hover:text-slate-300 transition-colors ${standalone ? 'cursor-move' : 'cursor-grab active:cursor-grabbing'}`}
+            {...(standalone ? { 'data-tauri-drag-region': '' } : {})}
+          >
             <LayoutGrid size={14} className="opacity-60" />
           </div>
 
-          <button
-            onMouseDown={(e) => e.stopPropagation()}
-            className="p-1.5 hover:bg-white/10 rounded-full text-slate-500 hover:text-white transition-colors">
-            <X size={14} />
-          </button>
+          {standalone && (
+            <button
+              onClick={async () => {
+                const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                const window = getCurrentWindow();
+                await window.hide();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="p-1.5 hover:bg-white/10 rounded-full text-slate-500 hover:text-white transition-colors"
+              title="Hide overlay">
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 

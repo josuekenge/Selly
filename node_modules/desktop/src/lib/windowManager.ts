@@ -32,10 +32,15 @@ export async function openOverlayWindow(sessionId: string): Promise<void> {
         skipTaskbar: true,
         x: 50,
         y: 100,
+        visible: true,
+        focus: true,
     });
 
-    overlayWindow.once('tauri://created', () => {
+    overlayWindow.once('tauri://created', async () => {
         console.log('[windowManager] Overlay window created');
+        // Ensure window is visible and focused
+        await overlayWindow?.show();
+        await overlayWindow?.setFocus();
     });
 
     overlayWindow.once('tauri://error', (e) => {

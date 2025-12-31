@@ -285,6 +285,34 @@ export interface RecommendationEvent {
  * - Connection state tracking
  * - Error handling and recovery
  */
+/**
+ * Generate AI summary of transcript using OpenAI
+ */
+export async function generateSummary(sessionId: string, transcript: Array<{ speaker: string; text: string }>): Promise<{ ok: boolean; summary: string; error?: string }> {
+    try {
+        const res = await fetch(`${BACKEND_URL}/api/calls/${sessionId}/summarize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript })
+        });
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || `Summary generation failed: ${res.status}`);
+        }
+
+        const data = await res.json();
+        return { ok: true, summary: data.summary };
+    } catch (error) {
+        console.error('[api] Error generating summary:', error);
+        return {
+            ok: false,
+            summary: '',
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
 export function subscribeToRecommendations(
     sessionId: string,
     onEvent: (event: RecommendationEvent) => void,

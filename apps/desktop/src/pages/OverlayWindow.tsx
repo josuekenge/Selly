@@ -2,6 +2,7 @@
 // Standalone page that renders only the OverlayPanel for the pop-out window
 
 import { useEffect, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import OverlayPanel from '../components/OverlayPanel';
 import {
   subscribeToTranscriptStream,
@@ -28,6 +29,17 @@ export default function OverlayWindow() {
     // Get sessionId from URL query params
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const sessionId = params.get('sessionId') || '';
+
+    // Ensure overlay window is visible on mount
+    useEffect(() => {
+        const currentWindow = getCurrentWindow();
+        currentWindow.show().then(() => {
+            console.log('[OverlayWindow] Window shown');
+            currentWindow.setFocus();
+        }).catch((err) => {
+            console.error('[OverlayWindow] Failed to show window:', err);
+        });
+    }, []);
 
     useEffect(() => {
         if (!sessionId) {
@@ -94,8 +106,7 @@ export default function OverlayWindow() {
 
     const handleStop = async () => {
         // Close this window - the main window handles the actual stop
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        const window = await getCurrentWindow();
+        const window = getCurrentWindow();
         await window.close();
     };
 
