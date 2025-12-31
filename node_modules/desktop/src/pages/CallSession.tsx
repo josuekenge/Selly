@@ -367,30 +367,11 @@ export default function CallSession() {
   }
 
   if (state === 'recording') {
-    const transcriptText = transcriptUtterances
-      .map(u => `[${u.speaker}] ${u.text}`)
-      .join('\n');
-
     return (
-      <>
-        {/* Full-screen Active Session backdrop with live transcripts */}
-        <ActiveSessionView
-          onStop={handleStop}
-          transcriptUtterances={transcriptUtterances}
-        />
-
-        {/* Draggable Overlay Panel */}
-        <OverlayPanel
-          transcriptUtterances={transcriptUtterances}
-          transcriptText={transcriptText}
-          liveRecommendations={liveRecommendations}
-          isRecording={true}
-          isPaused={isPaused}
-          onStop={handleStop}
-          onPause={handlePause}
-          onResume={handleResume}
-        />
-      </>
+      <ActiveSessionView
+        onStop={handleStop}
+        transcriptUtterances={transcriptUtterances}
+      />
     );
   }
 

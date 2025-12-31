@@ -10,6 +10,13 @@
         "build:contracts": "npm run build --workspace=@selly/contracts",
         "build:backend": "npm run build --workspace=selly-backend",
         "build:agent": "npm run build --workspace=selly-agent",
-        "build": "npm run build:contracts && npm run build:backend && npm run build:agent"
+        "build": "npm run build:contracts && npm run build:backend && npm run build:agent",
+        "dev:agent": "npm run dev --workspace=selly-agent",
+        "dev:backend": "npm run dev --workspace=selly-backend",
+        "dev:desktop": "npm run dev:tauri --workspace=desktop",
+        "all": "node dev-all.js"
+    },
+    "devDependencies": {
+        "concurrently": "^9.2.1"
     }
 }

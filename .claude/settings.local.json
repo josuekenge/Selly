@@ -17,7 +17,12 @@
       "Bash([ -f .env ])",
       "Bash(chmod:*)",
       "Bash(node test-transcription.js:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(npm run:*)",
+      "Bash(test:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

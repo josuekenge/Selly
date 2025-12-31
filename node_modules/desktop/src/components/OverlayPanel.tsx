@@ -32,6 +32,7 @@ interface OverlayPanelProps {
   onStop?: () => void;
   onPause?: () => void;
   onResume?: () => void;
+  standalone?: boolean; // When true, this is in a separate Tauri window
 }
 
 export default function OverlayPanel({
@@ -42,7 +43,8 @@ export default function OverlayPanel({
   isPaused = false,
   onStop,
   onPause,
-  onResume
+  onResume,
+  standalone = false
 }: OverlayPanelProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'transcript'>('chat');
   const [inputText, setInputText] = useState('');
@@ -107,18 +109,21 @@ export default function OverlayPanel({
   return (
     <div
       ref={containerRef}
-      style={{
+      style={standalone ? {
+        cursor: 'default'
+      } : {
         left: `${position.x}px`,
         top: `${position.y}px`,
         cursor: isDragging ? 'grabbing' : 'default'
       }}
-      className="fixed w-[360px] bg-black/40 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/5 overflow-hidden font-sans flex flex-col z-50 animate-in fade-in zoom-in-95 duration-200 ring-1 ring-white/10 select-none"
+      className={`${standalone ? 'h-full w-full' : 'fixed w-[360px]'} bg-black/40 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/5 overflow-hidden font-sans flex flex-col ${standalone ? '' : 'z-50 animate-in fade-in zoom-in-95 duration-200'} ring-1 ring-white/10 select-none`}
     >
 
       {/* Header / Controls */}
       <div
-        className="bg-white/5 p-2 flex items-center justify-between border-b border-white/5 backdrop-blur-md cursor-grab active:cursor-grabbing"
-        onMouseDown={handleDragStart}
+        className={`bg-white/5 p-2 flex items-center justify-between border-b border-white/5 backdrop-blur-md ${standalone ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+        onMouseDown={standalone ? undefined : handleDragStart}
+        data-tauri-drag-region={standalone}
       >
 
         {/* Recording Controls */}

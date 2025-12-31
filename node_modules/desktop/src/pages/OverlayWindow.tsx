@@ -3,7 +3,14 @@
 
 import { useEffect, useState } from 'react';
 import OverlayPanel from '../components/OverlayPanel';
-import { subscribeToTranscriptStream, subscribeToRecommendations, type TranscriptEvent, type RecommendationEvent } from '../lib/api';
+import {
+  subscribeToTranscriptStream,
+  subscribeToRecommendations,
+  agentPauseCapture,
+  agentResumeCapture,
+  type TranscriptEvent,
+  type RecommendationEvent
+} from '../lib/api';
 
 type SpeakerLabel = 'Rep' | 'Prospect' | 'Unknown';
 
@@ -16,6 +23,7 @@ interface TranscriptUtterance {
 export default function OverlayWindow() {
     const [transcriptUtterances, setTranscriptUtterances] = useState<TranscriptUtterance[]>([]);
     const [liveRecommendations, setLiveRecommendations] = useState<NonNullable<RecommendationEvent['recommendation']>[]>([]);
+    const [isPaused, setIsPaused] = useState<boolean>(false);
 
     // Get sessionId from URL query params
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
@@ -31,6 +39,19 @@ export default function OverlayWindow() {
         const unsubscribeTranscript = subscribeToTranscriptStream(
             sessionId,
             (event: TranscriptEvent) => {
+                // Handle pause/resume events
+                if (event.type === 'paused') {
+                    console.log('[OverlayWindow] Session paused by backend');
+                    setIsPaused(true);
+                    return;
+                }
+
+                if (event.type === 'resumed') {
+                    console.log('[OverlayWindow] Session resumed by backend');
+                    setIsPaused(false);
+                    return;
+                }
+
                 if (event.type === 'partial' || event.type === 'final') {
                     const speakerLabel: SpeakerLabel =
                         event.speaker === 'rep' ? 'Rep' :
@@ -78,14 +99,44 @@ export default function OverlayWindow() {
         await window.close();
     };
 
+    const handlePause = async () => {
+        if (!sessionId) return;
+
+        try {
+            console.log('[OverlayWindow] Pausing session...');
+            await agentPauseCapture(sessionId);
+            setIsPaused(true);
+            console.log('[OverlayWindow] Session paused successfully');
+        } catch (err) {
+            console.error('[OverlayWindow] Failed to pause session:', err);
+        }
+    };
+
+    const handleResume = async () => {
+        if (!sessionId) return;
+
+        try {
+            console.log('[OverlayWindow] Resuming session...');
+            await agentResumeCapture(sessionId);
+            setIsPaused(false);
+            console.log('[OverlayWindow] Session resumed successfully');
+        } catch (err) {
+            console.error('[OverlayWindow] Failed to resume session:', err);
+        }
+    };
+
     return (
-        <div className="min-h-screen bg-transparent">
+        <div className="h-screen w-screen bg-transparent">
             <OverlayPanel
                 transcriptUtterances={transcriptUtterances}
                 transcriptText={transcriptText}
                 liveRecommendations={liveRecommendations}
                 isRecording={true}
+                isPaused={isPaused}
                 onStop={handleStop}
+                onPause={handlePause}
+                onResume={handleResume}
+                standalone={true}
             />
         </div>
     );
