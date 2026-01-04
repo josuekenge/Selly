@@ -367,11 +367,29 @@ export default function CallSession() {
   }
 
   if (state === 'recording') {
+    // Build transcript text from utterances for the overlay
+    const transcriptText = transcriptUtterances
+      .filter(u => u.isFinal)
+      .map(u => `${u.speaker}: ${u.text}`)
+      .join('\n');
+
     return (
-      <ActiveSessionView
-        onStop={handleStop}
-        transcriptUtterances={transcriptUtterances}
-      />
+      <>
+        <ActiveSessionView
+          onStop={handleStop}
+          transcriptUtterances={transcriptUtterances}
+        />
+        <OverlayPanel
+          transcriptUtterances={transcriptUtterances}
+          transcriptText={transcriptText}
+          liveRecommendations={liveRecommendations}
+          isRecording={true}
+          isPaused={isPaused}
+          onStop={handleStop}
+          onPause={handlePause}
+          onResume={handleResume}
+        />
+      </>
     );
   }
 
